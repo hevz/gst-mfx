@@ -25,9 +25,6 @@ struct _GstMfxEncPrivate
     GstCaps *src_pad_caps;
     GstMfxEncTask *task_pool;
 
-    gint width;
-    gint height;
-    guint uv_offset;
     guint32 fs_buf_len;
     guint32 bs_buf_len;
     guint32 task_pool_len;
@@ -353,6 +350,7 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     GstStructure *structure = NULL;
     mfxStatus s = MFX_ERR_NONE;
     mfxFrameAllocRequest req;
+    gint width = 0, height = 0;
     gint numerator = 0, denominator = 0;
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
@@ -367,15 +365,14 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     if (!structure)
       goto fail;
     if (!gst_structure_get (structure,
-                    "width", G_TYPE_INT, &priv->width,
-                    "height", G_TYPE_INT, &priv->height,
+                    "width", G_TYPE_INT, &width,
+                    "height", G_TYPE_INT, &height,
                     NULL))
       goto fail;
     if (!gst_structure_get_fraction (structure, "framerate",
                     &numerator, &denominator))
       goto fail;
 
-    priv->uv_offset = priv->width * priv->height;
     memset (&priv->mfx_video_param, 0, sizeof (mfxVideoParam));
     priv->mfx_video_param.AsyncDepth = 0;
     priv->mfx_video_param.Protected = 0;
@@ -385,8 +382,8 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     priv->mfx_video_param.mfx.TargetKbps = 1024;
     priv->mfx_video_param.mfx.TargetUsage = MFX_TARGETUSAGE_BALANCED;
     priv->mfx_video_param.mfx.EncodedOrder = 0;
-    priv->mfx_video_param.mfx.FrameInfo.Width = priv->width;
-    priv->mfx_video_param.mfx.FrameInfo.Height = priv->height;
+    priv->mfx_video_param.mfx.FrameInfo.Width = width;
+    priv->mfx_video_param.mfx.FrameInfo.Height = height;
     priv->mfx_video_param.mfx.FrameInfo.FrameRateExtD = denominator;
     priv->mfx_video_param.mfx.FrameInfo.FrameRateExtN = numerator;
     priv->mfx_video_param.mfx.FrameInfo.FourCC = MFX_FOURCC_NV12;
@@ -394,8 +391,8 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     priv->mfx_video_param.mfx.FrameInfo.PicStruct = MFX_PICSTRUCT_PROGRESSIVE;
     priv->mfx_video_param.mfx.FrameInfo.CropX = 0;
     priv->mfx_video_param.mfx.FrameInfo.CropY = 0;
-    priv->mfx_video_param.mfx.FrameInfo.CropW = priv->width;
-    priv->mfx_video_param.mfx.FrameInfo.CropH = priv->height;
+    priv->mfx_video_param.mfx.FrameInfo.CropW = width;
+    priv->mfx_video_param.mfx.FrameInfo.CropH = height;
     s = MFXVideoENCODE_Init (priv->mfx_session, &priv->mfx_video_param);
     if (MFX_ERR_NONE != s) {
         g_critical ("MFXVideoENCODE_Init failed(%d)!", s);
@@ -409,9 +406,9 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     }
     switch (priv->mfx_video_param.mfx.FrameInfo.FourCC) {
     case MFX_FOURCC_NV12:
-        priv->fs_buf_len = priv->width * priv->height +
-            (priv->width>>1) * (priv->height>>1) +
-            (priv->width>>1) * (priv->height>>1);
+        priv->fs_buf_len = width * height +
+            (width>>1) * (height>>1) +
+            (width>>1) * (height>>1);
         break;
     }
     priv->bs_buf_len = priv->mfx_video_param.mfx.BufferSizeInKB * 1024;
@@ -454,10 +451,10 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
                     priv->task_pool[i].surface.Data.MemId;
                 priv->task_pool[i].surface.Data.U =
                     priv->task_pool[i].surface.Data.Y +
-                    priv->width * priv->height;
+                    width * height;
                 priv->task_pool[i].surface.Data.V =
                     priv->task_pool[i].surface.Data.U + 1;
-                priv->task_pool[i].surface.Data.Pitch = priv->width;
+                priv->task_pool[i].surface.Data.Pitch = width;
                 break;
             }
             /* Alloc buffer for output: mfxBitstream */
@@ -470,8 +467,8 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     if (priv->src_pad_caps)
       gst_caps_unref (priv->src_pad_caps);
     structure = gst_structure_new ("video/x-h264",
-                "width", G_TYPE_INT, priv->width,
-                "height", G_TYPE_INT, priv->height,
+                "width", G_TYPE_INT, width,
+                "height", G_TYPE_INT, height,
                 "framerate", GST_TYPE_FRACTION, numerator, denominator,
                 "stream-format", G_TYPE_STRING, "avc",
                 "alignment", G_TYPE_STRING, "au",
