@@ -54,6 +54,8 @@ static void gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send);
 static gboolean gst_mfx_enc_sink_pad_setcaps (GstPad *pad,
             GstCaps *caps);
 static gboolean gst_mfx_enc_sink_pad_event (GstPad *pad, GstEvent *event);
+static gint gst_mfx_enc_find_free_task (GstMfxEnc *self);
+static GstFlowReturn gst_mfx_enc_get_free_task (GstMfxEnc *self, gint *tid);
 static GstFlowReturn gst_mfx_enc_sink_pad_bufferalloc (GstPad *pad,
             guint64 offset, guint size, GstCaps *caps, GstBuffer **buf);
 static GstFlowReturn gst_mfx_enc_sink_pad_chain (GstPad *pad,
@@ -502,12 +504,58 @@ gst_mfx_enc_sink_pad_event (GstPad *pad, GstEvent *event)
     return gst_pad_push_event (priv->src_pad, event);
 }
 
+static gint
+gst_mfx_enc_find_free_task (GstMfxEnc *self)
+{
+    GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
+    gint i = 0, free = -1;
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    /* Find free task */
+    for (i=0; i<priv->task_pool_len; i++) {
+        if (NULL == priv->task_pool[i].sp) {
+            free = i;
+            break;
+        }
+    }
+
+    return free;
+}
+
+static GstFlowReturn
+gst_mfx_enc_get_free_task (GstMfxEnc *self, gint *tid)
+{
+    GstFlowReturn ret = GST_FLOW_OK;
+    gint free = -1;
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    g_return_val_if_fail (NULL != tid, GST_FLOW_ERROR);
+
+    for (;;) {
+
+        free = gst_mfx_enc_find_free_task (self);
+        if (-1 != free)
+          break;
+
+        /* Not found free task, Sync cached async operations */
+        ret = gst_mfx_enc_sync_tasks (self, TRUE, TRUE);
+        if (GST_FLOW_OK != ret)
+          break;
+    }
+    *tid = free;
+
+    return ret;
+}
+
 static GstFlowReturn
 gst_mfx_enc_sink_pad_bufferalloc (GstPad *pad, guint64 offset,
             guint size, GstCaps *caps, GstBuffer **buf)
 {
     GstMfxEnc *self = GST_MFX_ENC (GST_OBJECT_PARENT (pad));
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
+    GstFlowReturn ret = GST_FLOW_OK;
     gint free = -1;
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
@@ -526,26 +574,9 @@ gst_mfx_enc_sink_pad_bufferalloc (GstPad *pad, guint64 offset,
     if (G_UNLIKELY (size != priv->fs_buf_len))
       g_assert_not_reached ();
 
-    for (;;) {
-        gint i = 0;
-        GstFlowReturn ret = GST_FLOW_OK;
-
-        /* Find free task */
-        for (i=0; i<priv->task_pool_len; i++) {
-            if (NULL == priv->task_pool[i].sp) {
-                free = i;
-                break;
-            }
-        }
-
-        if (-1 != free)
-          break;
-
-        /* Not found free task, Sync cached async operations */
-        ret = gst_mfx_enc_sync_tasks (self, TRUE, TRUE);
-        if (GST_FLOW_OK != ret)
-          return ret;
-    }
+    ret = gst_mfx_enc_get_free_task (self, &free);
+    if (GST_FLOW_OK != ret)
+      return ret;
 
     *buf = gst_buffer_new ();
     if (!*buf)
@@ -581,11 +612,13 @@ gst_mfx_enc_sink_pad_chain (GstPad *pad, GstBuffer *buf)
         }
     }
 
-    /* Not found in task pool, it's first alloced buffer.
-     * Using task 0 to handle it, and set mcpy = TRUE.
+    /* Not found in task pool, may be is first alloced buffer.
+     * Get a free task to handle it and set mcpy = TRUE.
      */
     if (-1 == tid) {
-        tid = 0;
+        ret = gst_mfx_enc_get_free_task (self, &tid);
+        if (GST_FLOW_OK != ret)
+          goto fail;
         mcpy = TRUE;
     }
 
