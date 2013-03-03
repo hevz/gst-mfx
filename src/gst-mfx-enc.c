@@ -54,6 +54,8 @@ static void gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send);
 static gboolean gst_mfx_enc_sink_pad_setcaps (GstPad *pad,
             GstCaps *caps);
 static gboolean gst_mfx_enc_sink_pad_event (GstPad *pad, GstEvent *event);
+static GstFlowReturn gst_mfx_enc_sink_pad_bufferalloc (GstPad *pad,
+            guint64 offset, guint size, GstCaps *caps, GstBuffer **buf);
 static GstFlowReturn gst_mfx_enc_sink_pad_chain (GstPad *pad,
             GstBuffer *buf);
 
@@ -202,6 +204,8 @@ gst_mfx_enc_init (GstMfxEnc *self,
                 GST_DEBUG_FUNCPTR (gst_mfx_enc_sink_pad_setcaps));
     gst_pad_set_event_function (priv->sink_pad,
                 GST_DEBUG_FUNCPTR (gst_mfx_enc_sink_pad_event));
+    gst_pad_set_bufferalloc_function (priv->sink_pad,
+                GST_DEBUG_FUNCPTR (gst_mfx_enc_sink_pad_bufferalloc));
     gst_pad_set_chain_function (priv->sink_pad,
                 GST_DEBUG_FUNCPTR (gst_mfx_enc_sink_pad_chain));
 }
@@ -295,7 +299,10 @@ gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send,
                     memcpy (GST_BUFFER_DATA (buffer),
                                 ht->bstream.Data,
                                 ht->bstream.DataLength);
-                    GST_BUFFER_OFFSET (buffer) = ht->bstream.DataOffset;
+                    if (G_LIKELY (0 == ht->bstream.DataOffset))
+                      GST_BUFFER_OFFSET (buffer) = GST_BUFFER_OFFSET_NONE;
+                    else
+                      GST_BUFFER_OFFSET (buffer) = ht->bstream.DataOffset;
                     GST_BUFFER_TIMESTAMP (buffer) = ht->bstream.TimeStamp;
                     GST_BUFFER_DURATION (buffer) = ht->duration;
 
@@ -496,21 +503,34 @@ gst_mfx_enc_sink_pad_event (GstPad *pad, GstEvent *event)
 }
 
 static GstFlowReturn
-gst_mfx_enc_sink_pad_chain (GstPad *pad, GstBuffer *buf)
+gst_mfx_enc_sink_pad_bufferalloc (GstPad *pad, guint64 offset,
+            guint size, GstCaps *caps, GstBuffer **buf)
 {
     GstMfxEnc *self = GST_MFX_ENC (GST_OBJECT_PARENT (pad));
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
-    GstMfxEncTask *task = NULL;
-    GstFlowReturn ret = GST_FLOW_OK;
     gint free = -1;
-    gboolean retry = TRUE;
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
+    /* No task pool, alloc a normal buffer */
+    if (G_UNLIKELY (!priv->task_pool)) {
+        *buf = gst_buffer_new_and_alloc (size);
+        if (!*buf)
+          return GST_FLOW_ERROR;
+        GST_BUFFER_OFFSET (*buf) = offset;
+        gst_buffer_set_caps (*buf, caps);
+
+        return GST_FLOW_OK;
+    }
+
+    if (G_UNLIKELY (size != priv->fs_buf_len))
+      g_assert_not_reached ();
+
     for (;;) {
         gint i = 0;
+        GstFlowReturn ret = GST_FLOW_OK;
 
-        /* Find free mfxFrameSurface1 */
+        /* Find free task */
         for (i=0; i<priv->task_pool_len; i++) {
             if (NULL == priv->task_pool[i].sp) {
                 free = i;
@@ -521,17 +541,63 @@ gst_mfx_enc_sink_pad_chain (GstPad *pad, GstBuffer *buf)
         if (-1 != free)
           break;
 
-        /* Not found free mfxFrameSurface1, Sync cached async operations */
+        /* Not found free task, Sync cached async operations */
         ret = gst_mfx_enc_sync_tasks (self, TRUE, TRUE);
+        if (GST_FLOW_OK != ret)
+          return ret;
     }
 
-    task = &priv->task_pool[free];
+    *buf = gst_buffer_new ();
+    if (!*buf)
+      return GST_FLOW_ERROR;
+    GST_BUFFER_DATA (*buf) = priv->task_pool[free].surface.Data.MemId;
+    GST_BUFFER_SIZE (*buf) = priv->fs_buf_len;
+    if (G_UNLIKELY (GST_BUFFER_OFFSET_NONE != offset))
+      g_warning ("Request alloc buffer's offset isn't NONE!");
+    GST_BUFFER_OFFSET (*buf) = GST_BUFFER_OFFSET_NONE;
+    gst_buffer_set_caps (*buf, caps);
+
+    return GST_FLOW_OK;
+}
+
+static GstFlowReturn
+gst_mfx_enc_sink_pad_chain (GstPad *pad, GstBuffer *buf)
+{
+    GstMfxEnc *self = GST_MFX_ENC (GST_OBJECT_PARENT (pad));
+    GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
+    GstMfxEncTask *task = NULL;
+    GstFlowReturn ret = GST_FLOW_OK;
+    gint i = 0, tid = -1;
+    gboolean retry = TRUE, mcpy = FALSE;
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    /* Find buf's owner: task */
+    for (i=0; i<priv->task_pool_len; i++) {
+        if (priv->task_pool[i].surface.Data.MemId ==
+                    GST_BUFFER_DATA (buf)) {
+            tid = i;
+            break;
+        }
+    }
+
+    /* Not found in task pool, it's first alloced buffer.
+     * Using task 0 to handle it, and set mcpy = TRUE.
+     */
+    if (-1 == tid) {
+        tid = 0;
+        mcpy = TRUE;
+    }
+
+    task = &priv->task_pool[tid];
 
     /* Input: mfxFrameSurface1 */
-    if (priv->fs_buf_len != GST_BUFFER_SIZE (buf))
-      g_assert_not_reached ();
-    memcpy (task->surface.Data.MemId,
-                GST_BUFFER_DATA (buf), priv->fs_buf_len);
+    if (G_UNLIKELY (mcpy)) {
+        if (priv->fs_buf_len != GST_BUFFER_SIZE (buf))
+          g_assert_not_reached ();
+        memcpy (task->surface.Data.MemId,
+                    GST_BUFFER_DATA (buf), priv->fs_buf_len);
+    }
     task->surface.Data.TimeStamp = GST_BUFFER_TIMESTAMP (buf);
 
     /* Output: save duration */
