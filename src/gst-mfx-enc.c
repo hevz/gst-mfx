@@ -53,7 +53,7 @@ static GstFlowReturn gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send,
 static void gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send);
 static gboolean gst_mfx_enc_sink_pad_setcaps (GstPad *pad,
             GstCaps *caps);
-static gboolean gst_mfx_enc_sink_event (GstPad *pad, GstEvent *event);
+static gboolean gst_mfx_enc_sink_pad_event (GstPad *pad, GstEvent *event);
 static GstFlowReturn gst_mfx_enc_sink_pad_chain (GstPad *pad,
             GstBuffer *buf);
 
@@ -201,7 +201,7 @@ gst_mfx_enc_init (GstMfxEnc *self,
     gst_pad_set_setcaps_function (priv->sink_pad,
                 GST_DEBUG_FUNCPTR (gst_mfx_enc_sink_pad_setcaps));
     gst_pad_set_event_function (priv->sink_pad,
-                GST_DEBUG_FUNCPTR (gst_mfx_enc_sink_event));
+                GST_DEBUG_FUNCPTR (gst_mfx_enc_sink_pad_event));
     gst_pad_set_chain_function (priv->sink_pad,
                 GST_DEBUG_FUNCPTR (gst_mfx_enc_sink_pad_chain));
 }
@@ -477,7 +477,7 @@ fail:
 }
 
 static gboolean
-gst_mfx_enc_sink_event (GstPad *pad, GstEvent *event)
+gst_mfx_enc_sink_pad_event (GstPad *pad, GstEvent *event)
 {
     GstMfxEnc *self = GST_MFX_ENC (GST_OBJECT_PARENT (pad));
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
