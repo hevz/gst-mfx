@@ -43,15 +43,15 @@ struct _GstMfxEncTask
     GstClockTime duration;
 };
 
+static GstFlowReturn gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send);
+static gint gst_mfx_enc_find_free_task (GstMfxEnc *self);
+static GstFlowReturn gst_mfx_enc_get_free_task (GstMfxEnc *self, gint *tid);
+static void gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send);
 static GstStateChangeReturn gst_mfx_enc_change_state (GstElement * element,
             GstStateChange transition);
-static GstFlowReturn gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send);
-static void gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send);
 static gboolean gst_mfx_enc_sink_pad_setcaps (GstPad *pad,
             GstCaps *caps);
 static gboolean gst_mfx_enc_sink_pad_event (GstPad *pad, GstEvent *event);
-static gint gst_mfx_enc_find_free_task (GstMfxEnc *self);
-static GstFlowReturn gst_mfx_enc_get_free_task (GstMfxEnc *self, gint *tid);
 static GstFlowReturn gst_mfx_enc_sink_pad_bufferalloc (GstPad *pad,
             guint64 offset, guint size, GstCaps *caps, GstBuffer **buf);
 static GstFlowReturn gst_mfx_enc_sink_pad_chain (GstPad *pad,
@@ -208,60 +208,6 @@ gst_mfx_enc_init (GstMfxEnc *self,
                 GST_DEBUG_FUNCPTR (gst_mfx_enc_sink_pad_chain));
 }
 
-static GstStateChangeReturn
-gst_mfx_enc_change_state (GstElement * element,
-            GstStateChange transition)
-{
-    GstMfxEnc *self = GST_MFX_ENC (element);
-    GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
-    GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
-    ret = parent_class->change_state (element, transition);
-    if (GST_STATE_CHANGE_FAILURE == ret)
-      goto out;
-
-    switch (transition) {
-    case GST_STATE_CHANGE_NULL_TO_READY:
-        {
-            mfxStatus s = MFX_ERR_NONE;
-            mfxVersion ver;
-            mfxIMPL impl = MFX_IMPL_AUTO_ANY;
-
-            ver.Minor = 1;
-            ver.Major = 1;
-            s = MFXInit (impl, &ver, &priv->mfx_session);
-            if (MFX_ERR_NONE != s) {
-                g_critical ("MFXInit failed(%d)!", s);
-                ret = GST_STATE_CHANGE_FAILURE;
-                goto out;
-            }
-
-            s = MFXQueryIMPL (priv->mfx_session, &impl);
-            if (MFX_ERR_NONE == s)
-              g_debug ("MFXQueryIMPL -> %d", impl);
-            s = MFXQueryVersion (priv->mfx_session, &ver);
-            if (MFX_ERR_NONE == s)
-              g_debug ("MFXQueryVersion -> %d, %d",
-                          ver.Major, ver.Minor);
-        }
-        break;
-    case GST_STATE_CHANGE_PAUSED_TO_READY:
-        gst_mfx_enc_flush_frames (self, FALSE);
-        MFXVideoENCODE_Close (priv->mfx_session);
-        break;
-    case GST_STATE_CHANGE_READY_TO_NULL:
-        MFXClose (priv->mfx_session);
-        break;
-    default:
-        break;
-    }
-
-out:
-    return ret;
-}
-
 static GstFlowReturn
 gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send)
 {
@@ -332,12 +278,111 @@ gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send)
     return ret;
 }
 
+static gint
+gst_mfx_enc_find_free_task (GstMfxEnc *self)
+{
+    GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
+    gint i = 0, free = -1;
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    /* Find free task */
+    for (i=0; i<priv->task_pool_len; i++) {
+        if (NULL == priv->task_pool[i].sp) {
+            free = i;
+            break;
+        }
+    }
+
+    return free;
+}
+
+static GstFlowReturn
+gst_mfx_enc_get_free_task (GstMfxEnc *self, gint *tid)
+{
+    GstFlowReturn ret = GST_FLOW_OK;
+    gint free = -1;
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    g_return_val_if_fail (NULL != tid, GST_FLOW_ERROR);
+
+    for (;;) {
+
+        free = gst_mfx_enc_find_free_task (self);
+        if (-1 != free)
+          break;
+
+        /* Not found free task, Sync cached async operations */
+        ret = gst_mfx_enc_sync_tasks (self, TRUE);
+        if (GST_FLOW_OK != ret)
+          break;
+    }
+    *tid = free;
+
+    return ret;
+}
+
 static void
 gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send)
 {
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     gst_mfx_enc_sync_tasks (self, send);
+}
+
+static GstStateChangeReturn
+gst_mfx_enc_change_state (GstElement * element,
+            GstStateChange transition)
+{
+    GstMfxEnc *self = GST_MFX_ENC (element);
+    GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
+    GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    ret = parent_class->change_state (element, transition);
+    if (GST_STATE_CHANGE_FAILURE == ret)
+      goto out;
+
+    switch (transition) {
+    case GST_STATE_CHANGE_NULL_TO_READY:
+        {
+            mfxStatus s = MFX_ERR_NONE;
+            mfxVersion ver;
+            mfxIMPL impl = MFX_IMPL_AUTO_ANY;
+
+            ver.Minor = 1;
+            ver.Major = 1;
+            s = MFXInit (impl, &ver, &priv->mfx_session);
+            if (MFX_ERR_NONE != s) {
+                g_critical ("MFXInit failed(%d)!", s);
+                ret = GST_STATE_CHANGE_FAILURE;
+                goto out;
+            }
+
+            s = MFXQueryIMPL (priv->mfx_session, &impl);
+            if (MFX_ERR_NONE == s)
+              g_debug ("MFXQueryIMPL -> %d", impl);
+            s = MFXQueryVersion (priv->mfx_session, &ver);
+            if (MFX_ERR_NONE == s)
+              g_debug ("MFXQueryVersion -> %d, %d",
+                          ver.Major, ver.Minor);
+        }
+        break;
+    case GST_STATE_CHANGE_PAUSED_TO_READY:
+        gst_mfx_enc_flush_frames (self, FALSE);
+        MFXVideoENCODE_Close (priv->mfx_session);
+        break;
+    case GST_STATE_CHANGE_READY_TO_NULL:
+        MFXClose (priv->mfx_session);
+        break;
+    default:
+        break;
+    }
+
+out:
+    return ret;
 }
 
 static gboolean
@@ -499,51 +544,6 @@ gst_mfx_enc_sink_pad_event (GstPad *pad, GstEvent *event)
     }
 
     return gst_pad_push_event (priv->src_pad, event);
-}
-
-static gint
-gst_mfx_enc_find_free_task (GstMfxEnc *self)
-{
-    GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
-    gint i = 0, free = -1;
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
-    /* Find free task */
-    for (i=0; i<priv->task_pool_len; i++) {
-        if (NULL == priv->task_pool[i].sp) {
-            free = i;
-            break;
-        }
-    }
-
-    return free;
-}
-
-static GstFlowReturn
-gst_mfx_enc_get_free_task (GstMfxEnc *self, gint *tid)
-{
-    GstFlowReturn ret = GST_FLOW_OK;
-    gint free = -1;
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
-    g_return_val_if_fail (NULL != tid, GST_FLOW_ERROR);
-
-    for (;;) {
-
-        free = gst_mfx_enc_find_free_task (self);
-        if (-1 != free)
-          break;
-
-        /* Not found free task, Sync cached async operations */
-        ret = gst_mfx_enc_sync_tasks (self, TRUE);
-        if (GST_FLOW_OK != ret)
-          break;
-    }
-    *tid = free;
-
-    return ret;
 }
 
 static GstFlowReturn
