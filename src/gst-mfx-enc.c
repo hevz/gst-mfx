@@ -45,8 +45,7 @@ struct _GstMfxEncTask
 
 static GstStateChangeReturn gst_mfx_enc_change_state (GstElement * element,
             GstStateChange transition);
-static GstFlowReturn gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send,
-            gboolean only_first);
+static GstFlowReturn gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send);
 static void gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send);
 static gboolean gst_mfx_enc_sink_pad_setcaps (GstPad *pad,
             GstCaps *caps);
@@ -264,8 +263,7 @@ out:
 }
 
 static GstFlowReturn
-gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send,
-            gboolean only_first)
+gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send)
 {
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
     GstFlowReturn ret = GST_FLOW_OK;
@@ -316,7 +314,7 @@ gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send,
             ht->bstream.DataLength = 0;
             g_queue_pop_head (&priv->task_queue);
 
-            if (only_first || GST_FLOW_OK != ret)
+            if (GST_FLOW_OK != ret)
               break;
         } else if (MFX_ERR_NONE < hs) {
             if (MFX_WRN_DEVICE_BUSY == hs)
@@ -339,7 +337,7 @@ gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send)
 {
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
-    gst_mfx_enc_sync_tasks (self, send, FALSE);
+    gst_mfx_enc_sync_tasks (self, send);
 }
 
 static gboolean
@@ -374,14 +372,16 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
       goto fail;
 
     memset (&priv->mfx_video_param, 0, sizeof (mfxVideoParam));
-    priv->mfx_video_param.AsyncDepth = 0;
+    priv->mfx_video_param.AsyncDepth = 4;
     priv->mfx_video_param.Protected = 0;
     priv->mfx_video_param.IOPattern = MFX_IOPATTERN_IN_SYSTEM_MEMORY;
     priv->mfx_video_param.mfx.CodecId = MFX_CODEC_AVC;
     priv->mfx_video_param.mfx.CodecProfile = MFX_PROFILE_AVC_MAIN;
     priv->mfx_video_param.mfx.TargetKbps = 1024;
-    priv->mfx_video_param.mfx.TargetUsage = MFX_TARGETUSAGE_BALANCED;
+    priv->mfx_video_param.mfx.TargetUsage = MFX_TARGETUSAGE_BEST_SPEED;
     priv->mfx_video_param.mfx.EncodedOrder = 0;
+    priv->mfx_video_param.mfx.RateControlMethod = MFX_RATECONTROL_CBR;
+    priv->mfx_video_param.mfx.GopRefDist = 1;
     priv->mfx_video_param.mfx.FrameInfo.Width = width;
     priv->mfx_video_param.mfx.FrameInfo.Height = height;
     priv->mfx_video_param.mfx.FrameInfo.FrameRateExtD = denominator;
@@ -433,7 +433,7 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
                     priv->task_pool);
     }
     /* Alloc new task pool */
-    priv->task_pool_len = req.NumFrameSuggested + 1;
+    priv->task_pool_len = req.NumFrameSuggested;
     priv->task_pool = g_slice_alloc0 (sizeof (GstMfxEncTask) * priv->task_pool_len);
     {
         guint i = 0;
@@ -537,7 +537,7 @@ gst_mfx_enc_get_free_task (GstMfxEnc *self, gint *tid)
           break;
 
         /* Not found free task, Sync cached async operations */
-        ret = gst_mfx_enc_sync_tasks (self, TRUE, TRUE);
+        ret = gst_mfx_enc_sync_tasks (self, TRUE);
         if (GST_FLOW_OK != ret)
           break;
     }
