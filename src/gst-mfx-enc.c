@@ -38,8 +38,8 @@ struct _GstMfxEncTask
 {
     gint id;
 
-    mfxFrameSurface1 surface;
-    mfxBitstream bstream;
+    mfxFrameSurface1 input;
+    mfxBitstream output;
     mfxSyncPoint sp;
 
     GstClockTime duration;
@@ -116,9 +116,9 @@ gst_mfx_enc_finalize (GObject *obj)
 
         for (i=0; i<priv->task_pool_len; i++) {
             g_slice_free1 (priv->fs_buf_len,
-                        priv->task_pool[i].surface.Data.MemId);
+                        priv->task_pool[i].input.Data.MemId);
             g_slice_free1 (priv->bs_buf_len,
-                        priv->task_pool[i].bstream.Data);
+                        priv->task_pool[i].output.Data);
         }
         g_slice_free1 (sizeof (GstMfxEncTask) * priv->task_pool_len,
                     priv->task_pool);
@@ -240,31 +240,31 @@ gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send, gint *tid)
             if (send) {
                 r = gst_pad_alloc_buffer (priv->src_pad,
                             GST_BUFFER_OFFSET_NONE,
-                            ht->bstream.DataLength,
+                            ht->output.DataLength,
                             priv->src_pad_caps,
                             &buffer);
                 if (GST_FLOW_OK != r || NULL == buffer) {
                     g_critical ("Alloc buffer from src pad failed!");
                 } else {
                     memcpy (GST_BUFFER_DATA (buffer),
-                                ht->bstream.Data,
-                                ht->bstream.DataLength);
-                    if (G_LIKELY (0 == ht->bstream.DataOffset))
+                                ht->output.Data,
+                                ht->output.DataLength);
+                    if (G_LIKELY (0 == ht->output.DataOffset))
                       GST_BUFFER_OFFSET (buffer) = GST_BUFFER_OFFSET_NONE;
                     else
-                      GST_BUFFER_OFFSET (buffer) = ht->bstream.DataOffset;
-                    GST_BUFFER_TIMESTAMP (buffer) = ht->bstream.TimeStamp;
+                      GST_BUFFER_OFFSET (buffer) = ht->output.DataOffset;
+                    GST_BUFFER_TIMESTAMP (buffer) = ht->output.TimeStamp;
                     GST_BUFFER_DURATION (buffer) = ht->duration;
 
                     ret = gst_pad_push (priv->src_pad, buffer);
                 }
             }
             
-            /* Unlock task's surface and pop from task queue */
+            /* Unlock task's input and pop from task queue */
             ht->sp = NULL;
-            ht->surface.Data.Locked = 0;
-            ht->bstream.DataOffset = 0;
-            ht->bstream.DataLength = 0;
+            ht->input.Data.Locked = 0;
+            ht->output.DataOffset = 0;
+            ht->output.DataLength = 0;
             g_queue_pop_head (&priv->task_queue);
             ftid = ht->id;
 
@@ -282,9 +282,9 @@ gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send, gint *tid)
         } else {
             /* Sync error, pop from task queue and drop this frame */
             ht->sp = NULL;
-            ht->surface.Data.Locked = 0;
-            ht->bstream.DataOffset = 0;
-            ht->bstream.DataLength = 0;
+            ht->input.Data.Locked = 0;
+            ht->output.DataOffset = 0;
+            ht->output.DataLength = 0;
             g_queue_pop_head (&priv->task_queue);
 
             /* Have an exception, current task is freed, return */
@@ -482,9 +482,9 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
 
         for (i=0; i<priv->task_pool_len; i++) {
             g_slice_free1 (priv->fs_buf_len,
-                        priv->task_pool[i].surface.Data.MemId);
+                        priv->task_pool[i].input.Data.MemId);
             g_slice_free1 (priv->bs_buf_len,
-                        priv->task_pool[i].bstream.Data);
+                        priv->task_pool[i].output.Data);
         }
         g_slice_free1 (sizeof (GstMfxEncTask) * priv->task_pool_len,
                     priv->task_pool);
@@ -499,28 +499,28 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
             /* Id */
             priv->task_pool[i].id = i;
             /* Set input frame info */
-            memcpy (&priv->task_pool[i].surface.Info,
+            memcpy (&priv->task_pool[i].input.Info,
                         &priv->mfx_video_param.mfx.FrameInfo,
                         sizeof (mfxFrameInfo));
             /* Alloc buffer for input: mfxFrameSurface1 */
-            priv->task_pool[i].surface.Data.MemId =
+            priv->task_pool[i].input.Data.MemId =
                 g_slice_alloc0 (priv->fs_buf_len);
             switch (priv->mfx_video_param.mfx.FrameInfo.FourCC) {
             case MFX_FOURCC_NV12:
-                priv->task_pool[i].surface.Data.Y =
-                    priv->task_pool[i].surface.Data.MemId;
-                priv->task_pool[i].surface.Data.U =
-                    priv->task_pool[i].surface.Data.Y +
+                priv->task_pool[i].input.Data.Y =
+                    priv->task_pool[i].input.Data.MemId;
+                priv->task_pool[i].input.Data.U =
+                    priv->task_pool[i].input.Data.Y +
                     width * height;
-                priv->task_pool[i].surface.Data.V =
-                    priv->task_pool[i].surface.Data.U + 1;
-                priv->task_pool[i].surface.Data.Pitch = width;
+                priv->task_pool[i].input.Data.V =
+                    priv->task_pool[i].input.Data.U + 1;
+                priv->task_pool[i].input.Data.Pitch = width;
                 break;
             }
             /* Alloc buffer for output: mfxBitstream */
-            priv->task_pool[i].bstream.Data =
+            priv->task_pool[i].output.Data =
                 g_slice_alloc0 (priv->bs_buf_len);
-            priv->task_pool[i].bstream.MaxLength = priv->bs_buf_len;
+            priv->task_pool[i].output.MaxLength = priv->bs_buf_len;
         }
     }
 
@@ -593,7 +593,7 @@ gst_mfx_enc_sink_pad_bufferalloc (GstPad *pad, guint64 offset,
     *buf = gst_buffer_new ();
     if (!*buf)
       return GST_FLOW_ERROR;
-    GST_BUFFER_DATA (*buf) = priv->task_pool[free].surface.Data.MemId;
+    GST_BUFFER_DATA (*buf) = priv->task_pool[free].input.Data.MemId;
     GST_BUFFER_SIZE (*buf) = priv->fs_buf_len;
     if (G_UNLIKELY (GST_BUFFER_OFFSET_NONE != offset))
       g_warning ("Request alloc buffer's offset isn't NONE!");
@@ -617,7 +617,7 @@ gst_mfx_enc_sink_pad_chain (GstPad *pad, GstBuffer *buf)
 
     /* Find buf's owner: task */
     for (i=0; i<priv->task_pool_len; i++) {
-        if (priv->task_pool[i].surface.Data.MemId ==
+        if (priv->task_pool[i].input.Data.MemId ==
                     GST_BUFFER_DATA (buf)) {
             tid = i;
             break;
@@ -640,10 +640,10 @@ gst_mfx_enc_sink_pad_chain (GstPad *pad, GstBuffer *buf)
     if (G_UNLIKELY (mcpy)) {
         if (priv->fs_buf_len != GST_BUFFER_SIZE (buf))
           g_assert_not_reached ();
-        memcpy (task->surface.Data.MemId,
+        memcpy (task->input.Data.MemId,
                     GST_BUFFER_DATA (buf), priv->fs_buf_len);
     }
-    task->surface.Data.TimeStamp = GST_BUFFER_TIMESTAMP (buf);
+    task->input.Data.TimeStamp = GST_BUFFER_TIMESTAMP (buf);
 
     /* Output: save duration */
     task->duration = GST_BUFFER_DURATION (buf);
@@ -656,7 +656,7 @@ gst_mfx_enc_sink_pad_chain (GstPad *pad, GstBuffer *buf)
         mfxStatus s = MFX_ERR_NONE;
 
         s = MFXVideoENCODE_EncodeFrameAsync (priv->mfx_session, NULL,
-                    &task->surface, &task->bstream, &task->sp);
+                    &task->input, &task->output, &task->sp);
 
         if (MFX_ERR_NONE < s && !task->sp) {
             if (MFX_WRN_DEVICE_BUSY == s)
