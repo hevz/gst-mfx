@@ -439,7 +439,7 @@ gst_mfx_scl_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     }
 
     memset (&priv->mfx_video_param, 0, sizeof (mfxVideoParam));
-    priv->mfx_video_param.AsyncDepth = 4;
+    priv->mfx_video_param.AsyncDepth = 0;
     priv->mfx_video_param.Protected = 0;
     priv->mfx_video_param.IOPattern = MFX_IOPATTERN_IN_SYSTEM_MEMORY |
                                     MFX_IOPATTERN_OUT_SYSTEM_MEMORY;

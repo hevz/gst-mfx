@@ -429,7 +429,7 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
       goto fail;
 
     memset (&priv->mfx_video_param, 0, sizeof (mfxVideoParam));
-    priv->mfx_video_param.AsyncDepth = 4;
+    priv->mfx_video_param.AsyncDepth = 0;
     priv->mfx_video_param.Protected = 0;
     priv->mfx_video_param.IOPattern = MFX_IOPATTERN_IN_SYSTEM_MEMORY;
     priv->mfx_video_param.mfx.CodecId = MFX_CODEC_AVC;
