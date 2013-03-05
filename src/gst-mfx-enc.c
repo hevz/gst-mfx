@@ -36,6 +36,8 @@ struct _GstMfxEncPrivate
 
 struct _GstMfxEncTask
 {
+    gint id;
+
     mfxFrameSurface1 surface;
     mfxBitstream bstream;
     mfxSyncPoint sp;
@@ -43,7 +45,8 @@ struct _GstMfxEncTask
     GstClockTime duration;
 };
 
-static GstFlowReturn gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send);
+static GstFlowReturn gst_mfx_enc_sync_tasks (GstMfxEnc *self,
+            gboolean send, gint *tid);
 static gint gst_mfx_enc_find_free_task (GstMfxEnc *self);
 static GstFlowReturn gst_mfx_enc_get_free_task (GstMfxEnc *self, gint *tid);
 static void gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send);
@@ -209,10 +212,11 @@ gst_mfx_enc_init (GstMfxEnc *self,
 }
 
 static GstFlowReturn
-gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send)
+gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send, gint *tid)
 {
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
     GstFlowReturn ret = GST_FLOW_OK;
+    gint ftid = -1;
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
@@ -221,8 +225,11 @@ gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send)
         mfxStatus hs = MFX_ERR_NONE;
 
         ht = g_queue_peek_head (&priv->task_queue);
-        if (!ht)
-          break;
+        if (!ht) {
+            if (tid)
+              *tid = ftid;
+            break;
+        }
 
         hs = MFXVideoCORE_SyncOperation (priv->mfx_session, ht->sp, 0);
         /* The async operation is ready, push to src pad */
@@ -259,10 +266,17 @@ gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send)
             ht->bstream.DataOffset = 0;
             ht->bstream.DataLength = 0;
             g_queue_pop_head (&priv->task_queue);
+            ftid = ht->id;
 
             if (GST_FLOW_OK != ret)
               break;
         } else if (MFX_ERR_NONE < hs) {
+            /* Have an exception, one task has been freed, return */
+            if (tid && -1 != ftid) {
+                *tid = ftid;
+                break;
+            }
+
             if (MFX_WRN_DEVICE_BUSY == hs)
               g_usleep (100);
         } else {
@@ -272,6 +286,12 @@ gst_mfx_enc_sync_tasks (GstMfxEnc *self, gboolean send)
             ht->bstream.DataOffset = 0;
             ht->bstream.DataLength = 0;
             g_queue_pop_head (&priv->task_queue);
+
+            /* Have an exception, current task is freed, return */
+            if (tid) {
+                *tid = ht->id;
+                break;
+            }
         }
     }
 
@@ -289,7 +309,7 @@ gst_mfx_enc_find_free_task (GstMfxEnc *self)
     /* Find free task */
     for (i=0; i<priv->task_pool_len; i++) {
         if (NULL == priv->task_pool[i].sp) {
-            free = i;
+            free = i; /* i == task id */
             break;
         }
     }
@@ -301,24 +321,16 @@ static GstFlowReturn
 gst_mfx_enc_get_free_task (GstMfxEnc *self, gint *tid)
 {
     GstFlowReturn ret = GST_FLOW_OK;
-    gint free = -1;
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     g_return_val_if_fail (NULL != tid, GST_FLOW_ERROR);
 
-    for (;;) {
-
-        free = gst_mfx_enc_find_free_task (self);
-        if (-1 != free)
-          break;
-
+    *tid = gst_mfx_enc_find_free_task (self);
+    if (-1 == *tid) {
         /* Not found free task, Sync cached async operations */
-        ret = gst_mfx_enc_sync_tasks (self, TRUE);
-        if (GST_FLOW_OK != ret)
-          break;
+        ret = gst_mfx_enc_sync_tasks (self, TRUE, tid);
     }
-    *tid = free;
 
     return ret;
 }
@@ -328,7 +340,7 @@ gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send)
 {
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
-    gst_mfx_enc_sync_tasks (self, send);
+    gst_mfx_enc_sync_tasks (self, send, NULL);
 }
 
 static GstStateChangeReturn
@@ -484,6 +496,9 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
         guint i = 0;
 
         for (i=0; i<priv->task_pool_len; i++) {
+            /* Id */
+            priv->task_pool[i].id = i;
+            /* Set input frame info */
             memcpy (&priv->task_pool[i].surface.Info,
                         &priv->mfx_video_param.mfx.FrameInfo,
                         sizeof (mfxFrameInfo));
