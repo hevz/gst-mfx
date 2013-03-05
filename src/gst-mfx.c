@@ -46,6 +46,9 @@ plugin_init (GstPlugin *plugin)
     if (!gst_element_register (plugin, "mfxdec",
                     GST_RANK_NONE, GST_TYPE_MFX_DEC))
       return FALSE;
+    if (!gst_element_register (plugin, "mfxscl",
+                    GST_RANK_NONE, GST_TYPE_MFX_SCL))
+      return FALSE;
 
     return TRUE;
 }
