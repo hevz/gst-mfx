@@ -24,6 +24,7 @@ struct _GstMfxEncPrivate
     GstPad *src_pad;
     GstCaps *src_pad_caps;
     GstMfxEncTask *task_pool;
+    GstMfxEncTask *task_curr;
 
     guint32 fs_buf_len;
     guint32 bs_buf_len;
@@ -597,6 +598,8 @@ gst_mfx_enc_sink_pad_bufferalloc (GstPad *pad, guint64 offset,
     GST_BUFFER_SIZE (*buf) = priv->fs_buf_len;
     GST_BUFFER_OFFSET (*buf) = GST_BUFFER_OFFSET_NONE;
     gst_buffer_set_caps (*buf, caps);
+    /* Save the task in task_curr */
+    priv->task_curr = &priv->task_pool[free];
 
     return GST_FLOW_OK;
 }
@@ -613,12 +616,19 @@ gst_mfx_enc_sink_pad_chain (GstPad *pad, GstBuffer *buf)
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
-    /* Find buf's owner: task */
-    for (i=0; i<priv->task_pool_len; i++) {
-        if (priv->task_pool[i].input.Data.MemId ==
-                    GST_BUFFER_DATA (buf)) {
-            tid = i;
-            break;
+    /* Guess the input buf is in task_curr */
+    if (priv->task_curr && GST_BUFFER_DATA (buf) ==
+                priv->task_curr->input.Data.MemId) {
+        tid = priv->task_curr->id;
+        priv->task_curr = NULL;
+    } else {
+        /* Oh, is wrong! find buf's owner: task */
+        for (i=0; i<priv->task_pool_len; i++) {
+            if (priv->task_pool[i].input.Data.MemId ==
+                        GST_BUFFER_DATA (buf)) {
+                tid = i;
+                break;
+            }
         }
     }
 
