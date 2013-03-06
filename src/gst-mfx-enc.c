@@ -595,8 +595,6 @@ gst_mfx_enc_sink_pad_bufferalloc (GstPad *pad, guint64 offset,
       return GST_FLOW_ERROR;
     GST_BUFFER_DATA (*buf) = priv->task_pool[free].input.Data.MemId;
     GST_BUFFER_SIZE (*buf) = priv->fs_buf_len;
-    if (G_UNLIKELY (GST_BUFFER_OFFSET_NONE != offset))
-      g_warning ("Request alloc buffer's offset isn't NONE!");
     GST_BUFFER_OFFSET (*buf) = GST_BUFFER_OFFSET_NONE;
     gst_buffer_set_caps (*buf, caps);
 
