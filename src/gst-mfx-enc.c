@@ -41,6 +41,7 @@ struct _GstMfxEncPrivate
     mfxVideoParam mfx_video_param;
 
     GstFlowReturn src_pad_ret;
+    gboolean src_pad_push_status;
 };
 
 struct _GstMfxEncTask
@@ -261,7 +262,8 @@ gst_mfx_enc_pop_exec_task (GstMfxEnc *self)
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     g_mutex_lock (&priv->exec_mutex);
-    while (!g_queue_peek_head (&priv->exec_queue))
+    while (priv->src_pad_push_status &&
+                !g_queue_peek_head (&priv->exec_queue))
       g_cond_wait (&priv->exec_cond, &priv->exec_mutex);
     task = g_queue_pop_head (&priv->exec_queue);
     g_mutex_unlock (&priv->exec_mutex);
@@ -298,7 +300,8 @@ gst_mfx_enc_pop_idle_task (GstMfxEnc *self)
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     g_mutex_lock (&priv->idle_mutex);
-    while (!g_queue_peek_head (&priv->idle_queue))
+    while (priv->src_pad_push_status &&
+                !g_queue_peek_head (&priv->idle_queue))
       g_cond_wait (&priv->idle_cond, &priv->idle_mutex);
     task = g_queue_pop_head (&priv->idle_queue);
     g_mutex_unlock (&priv->idle_mutex);
@@ -318,9 +321,11 @@ gst_mfx_enc_sync_task (GstMfxEnc *self, gboolean send)
 
     /* Pop task from exec queue */
     task = gst_mfx_enc_pop_exec_task (self);
+    if (G_UNLIKELY (NULL == task))
+      return GST_FLOW_UNEXPECTED;
     do {
         s = MFXVideoCORE_SyncOperation (priv->mfx_session,
-                    task->sp, 1000);
+                    task->sp, G_MAXUINT32);
         /* The async operation is ready, push to src pad */
         if (MFX_ERR_NONE == s) {
             GstBuffer *buffer = NULL;
@@ -736,9 +741,15 @@ gst_mfx_enc_src_pad_activatepush (GstPad *pad, gboolean activate)
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     if (activate) {
+        priv->src_pad_push_status = TRUE;
         ret = gst_pad_start_task (priv->src_pad,
                     gst_mfx_enc_src_pad_task_handler, self);
     } else {
+        /* Send a quit signal to task thread */
+        g_mutex_lock (&priv->exec_mutex);
+        priv->src_pad_push_status = FALSE;
+        g_cond_signal (&priv->exec_cond);
+        g_mutex_unlock (&priv->exec_mutex);
         ret = gst_pad_stop_task (priv->src_pad);
     }
 
