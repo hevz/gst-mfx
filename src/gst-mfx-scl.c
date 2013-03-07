@@ -13,6 +13,9 @@
 
 #include "gst-mfx-scl.h"
 
+#define DEFAULT_TARGET_WIDTH    640
+#define DEFAULT_TARGET_HEIGHT   480
+
 #define GST_MFX_SCL_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), GST_TYPE_MFX_SCL, GstMfxSclPrivate))
 
 enum
@@ -41,9 +44,17 @@ struct _GstMfxSclPrivate
     guint32 out_buf_len;
     guint32 task_pool_len;
 
-    GQueue task_queue;
+    GMutex exec_mutex;
+    GCond exec_cond;
+    GQueue exec_queue;
+    GMutex idle_mutex;
+    GCond idle_cond;
+    GQueue idle_queue;
+
     mfxSession mfx_session;
     mfxVideoParam mfx_video_param;
+
+    GstFlowReturn src_pad_ret;
 };
 
 struct _GstMfxSclTask
@@ -57,11 +68,16 @@ struct _GstMfxSclTask
     GstClockTime duration;
 };
 
-static GstFlowReturn gst_mfx_scl_sync_tasks (GstMfxScl *self,
-            gboolean send, gint *tid);
-static gint gst_mfx_scl_find_free_task (GstMfxScl *self);
-static GstFlowReturn gst_mfx_scl_get_free_task (GstMfxScl *self, gint *tid);
+static void gst_mfx_scl_push_exec_task (GstMfxScl *self, GstMfxSclTask *task);
+static GstMfxSclTask * gst_mfx_scl_pop_exec_task (GstMfxScl *self);
+static void gst_mfx_scl_push_idle_task (GstMfxScl *self, GstMfxSclTask *task);
+static GstMfxSclTask * gst_mfx_scl_pop_idle_task (GstMfxScl *self);
+static GstFlowReturn gst_mfx_scl_sync_task (GstMfxScl *self, gboolean send);
 static void gst_mfx_scl_flush_frames (GstMfxScl *self, gboolean send);
+static void gst_mfx_scl_set_property (GObject *obj, guint id,
+            const GValue *value, GParamSpec *pspec);
+static void gst_mfx_scl_get_property (GObject *obj, guint id,
+            GValue *value, GParamSpec *pspec);
 static GstStateChangeReturn gst_mfx_scl_change_state (GstElement * element,
             GstStateChange transition);
 static gboolean gst_mfx_scl_sink_pad_setcaps (GstPad *pad,
@@ -71,6 +87,9 @@ static GstFlowReturn gst_mfx_scl_sink_pad_bufferalloc (GstPad *pad,
             guint64 offset, guint size, GstCaps *caps, GstBuffer **buf);
 static GstFlowReturn gst_mfx_scl_sink_pad_chain (GstPad *pad,
             GstBuffer *buf);
+static gboolean gst_mfx_scl_src_pad_activatepush (GstPad *pad,
+            gboolean activate);
+static void gst_mfx_scl_src_pad_task_handler (gpointer data);
 
 static const GstElementDetails gst_mfx_scl_details =
 GST_ELEMENT_DETAILS (
@@ -120,7 +139,12 @@ gst_mfx_scl_finalize (GObject *obj)
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
-    g_queue_clear (&priv->task_queue);
+    g_queue_clear (&priv->idle_queue);
+    g_cond_clear (&priv->idle_cond);
+    g_mutex_clear (&priv->idle_mutex);
+    g_queue_clear (&priv->exec_queue);
+    g_cond_clear (&priv->exec_cond);
+    g_mutex_clear (&priv->exec_mutex);
 
     if (priv->task_pool) {
         guint i = 0;
@@ -187,10 +211,21 @@ gst_mfx_scl_class_init (GstMfxSclClass *klass)
 
     obj_class->constructor = gst_mfx_scl_constructor;
     obj_class->constructed = gst_mfx_scl_constructed;
+    obj_class->set_property = gst_mfx_scl_set_property;
+    obj_class->get_property = gst_mfx_scl_get_property;
     obj_class->dispose = gst_mfx_scl_dispose;
     obj_class->finalize = gst_mfx_scl_finalize;
 
     element_class->change_state = gst_mfx_scl_change_state;
+
+    g_object_class_install_property (obj_class, PROP_WIDTH,
+                g_param_spec_int ("width", "Width",
+                    "Target width", 1, G_MAXINT, DEFAULT_TARGET_WIDTH,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+    g_object_class_install_property (obj_class, PROP_HEIGHT,
+                g_param_spec_int ("height", "Height",
+                    "Target height", 1, G_MAXINT, DEFAULT_TARGET_HEIGHT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
 
     g_type_class_add_private (klass, sizeof (GstMfxSclPrivate));
 }
@@ -203,7 +238,17 @@ gst_mfx_scl_init (GstMfxScl *self,
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
-    g_queue_init (&priv->task_queue);
+    priv->width = DEFAULT_TARGET_WIDTH;
+    priv->height = DEFAULT_TARGET_HEIGHT;
+
+    g_queue_init (&priv->exec_queue);
+    g_cond_init (&priv->exec_cond);
+    g_mutex_init (&priv->exec_mutex);
+    g_queue_init (&priv->idle_queue);
+    g_cond_init (&priv->idle_cond);
+    g_mutex_init (&priv->idle_mutex);
+
+    priv->src_pad_ret = GST_FLOW_OK;
 
     gst_element_create_all_pads (GST_ELEMENT (self));
     
@@ -220,31 +265,96 @@ gst_mfx_scl_init (GstMfxScl *self,
                 GST_DEBUG_FUNCPTR (gst_mfx_scl_sink_pad_bufferalloc));
     gst_pad_set_chain_function (priv->sink_pad,
                 GST_DEBUG_FUNCPTR (gst_mfx_scl_sink_pad_chain));
+
+    gst_pad_set_activatepush_function (priv->src_pad,
+                GST_DEBUG_FUNCPTR (gst_mfx_scl_src_pad_activatepush));
 }
 
-static GstFlowReturn
-gst_mfx_scl_sync_tasks (GstMfxScl *self, gboolean send, gint *tid)
+static void
+gst_mfx_scl_push_exec_task (GstMfxScl *self, GstMfxSclTask *task)
 {
     GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
-    GstFlowReturn ret = GST_FLOW_OK;
-    gint ftid = -1;
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
-    for (;;) {
-        GstMfxSclTask *ht = NULL;
-        mfxStatus hs = MFX_ERR_NONE;
+    g_return_if_fail (NULL != task);
 
-        ht = g_queue_peek_head (&priv->task_queue);
-        if (!ht) {
-            if (tid)
-              *tid = ftid;
-            break;
-        }
+    g_mutex_lock (&priv->exec_mutex);
+    g_queue_push_tail (&priv->exec_queue, task);
+    g_cond_signal (&priv->exec_cond);
+    g_mutex_unlock (&priv->exec_mutex);
+}
 
-        hs = MFXVideoCORE_SyncOperation (priv->mfx_session, ht->sp, 0);
+static GstMfxSclTask *
+gst_mfx_scl_pop_exec_task (GstMfxScl *self)
+{
+    GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
+    GstMfxSclTask *task = NULL;
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    g_mutex_lock (&priv->exec_mutex);
+    while (!g_queue_peek_head (&priv->exec_queue))
+      g_cond_wait (&priv->exec_cond, &priv->exec_mutex);
+    task = g_queue_pop_head (&priv->exec_queue);
+    g_mutex_unlock (&priv->exec_mutex);
+
+    return task;
+}
+
+static void
+gst_mfx_scl_push_idle_task (GstMfxScl *self, GstMfxSclTask *task)
+{
+    GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    g_return_if_fail (NULL != task);
+
+    task->sp = NULL;
+    task->input.Data.Locked = 0;
+    task->output.Data.Locked = 0;
+
+    g_mutex_lock (&priv->idle_mutex);
+    g_queue_push_tail (&priv->idle_queue, task);
+    g_cond_signal (&priv->idle_cond);
+    g_mutex_unlock (&priv->idle_mutex);
+}
+
+static GstMfxSclTask *
+gst_mfx_scl_pop_idle_task (GstMfxScl *self)
+{
+    GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
+    GstMfxSclTask *task = NULL;
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    g_mutex_lock (&priv->idle_mutex);
+    while (!g_queue_peek_head (&priv->idle_queue))
+      g_cond_wait (&priv->idle_cond, &priv->idle_mutex);
+    task = g_queue_pop_head (&priv->idle_queue);
+    g_mutex_unlock (&priv->idle_mutex);
+
+    return task;
+}
+
+static GstFlowReturn
+gst_mfx_scl_sync_task (GstMfxScl *self, gboolean send)
+{
+    GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
+    GstFlowReturn ret = GST_FLOW_OK;
+    GstMfxSclTask *task = NULL;
+    mfxStatus s = MFX_ERR_NONE;
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    /* Pop task from exec queue */
+    task = gst_mfx_scl_pop_exec_task (self);
+    do {
+        s = MFXVideoCORE_SyncOperation (priv->mfx_session,
+                    task->sp, 1000);
         /* The async operation is ready, push to src pad */
-        if (MFX_ERR_NONE == hs) {
+        if (MFX_ERR_NONE == s) {
             GstFlowReturn r = GST_FLOW_OK;
             GstBuffer *buffer = NULL;
 
@@ -258,85 +368,23 @@ gst_mfx_scl_sync_tasks (GstMfxScl *self, gboolean send, gint *tid)
                     g_critical ("Alloc buffer from src pad failed!");
                 } else {
                     memcpy (GST_BUFFER_DATA (buffer),
-                                ht->output.Data.MemId,
+                                task->output.Data.MemId,
                                 priv->out_buf_len);
                     GST_BUFFER_OFFSET (buffer) = GST_BUFFER_OFFSET_NONE;
-                    GST_BUFFER_TIMESTAMP (buffer) = ht->output.Data.TimeStamp;
-                    GST_BUFFER_DURATION (buffer) = ht->duration;
+                    GST_BUFFER_TIMESTAMP (buffer) = task->output.Data.TimeStamp;
+                    GST_BUFFER_DURATION (buffer) = task->duration;
 
                     ret = gst_pad_push (priv->src_pad, buffer);
                 }
             }
             
-            /* Unlock task's surface and pop from task queue */
-            ht->sp = NULL;
-            ht->input.Data.Locked = 0;
-            ht->output.Data.Locked = 0;
-            g_queue_pop_head (&priv->task_queue);
-            ftid = ht->id;
-
-            if (GST_FLOW_OK != ret)
-              break;
-        } else if (MFX_ERR_NONE < hs) {
-            /* Have an exception, one task has been freed, return */
-            if (tid && -1 != ftid) {
-                *tid = ftid;
-                break;
-            }
-
-            if (MFX_WRN_DEVICE_BUSY == hs)
-              g_usleep (100);
-        } else {
-            /* Sync error, pop from task queue and drop this frame */
-            ht->sp = NULL;
-            ht->input.Data.Locked = 0;
-            ht->output.Data.Locked = 0;
-            g_queue_pop_head (&priv->task_queue);
-
-            /* Have an exception, current task is freed, return */
-            if (tid) {
-                *tid = ht->id;
-                break;
-            }
+            /* Push task to idle queue */
+            gst_mfx_scl_push_idle_task (self, task);
+        } else if (MFX_ERR_NONE > s) {
+            /* Push task to idle queue */
+            gst_mfx_scl_push_idle_task (self, task);
         }
-    }
-
-    return ret;
-}
-
-static gint
-gst_mfx_scl_find_free_task (GstMfxScl *self)
-{
-    GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
-    gint i = 0, free = -1;
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
-    /* Find free task */
-    for (i=0; i<priv->task_pool_len; i++) {
-        if (NULL == priv->task_pool[i].sp) {
-            free = i; /* i == task id */
-            break;
-        }
-    }
-
-    return free;
-}
-
-static GstFlowReturn
-gst_mfx_scl_get_free_task (GstMfxScl *self, gint *tid)
-{
-    GstFlowReturn ret = GST_FLOW_OK;
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
-    g_return_val_if_fail (NULL != tid, GST_FLOW_ERROR);
-
-    *tid = gst_mfx_scl_find_free_task (self);
-    if (-1 == *tid) {
-        /* Not found free task, Sync cached async operations */
-        ret = gst_mfx_scl_sync_tasks (self, TRUE, tid);
-    }
+    } while (MFX_ERR_NONE < s);
 
     return ret;
 }
@@ -344,9 +392,56 @@ gst_mfx_scl_get_free_task (GstMfxScl *self, gint *tid)
 static void
 gst_mfx_scl_flush_frames (GstMfxScl *self, gboolean send)
 {
+    GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
+
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
-    gst_mfx_scl_sync_tasks (self, send, NULL);
+    while (g_queue_peek_head (&priv->exec_queue))
+      gst_mfx_scl_sync_task (self, send);
+}
+
+static void
+gst_mfx_scl_set_property (GObject *obj, guint id,
+            const GValue *value, GParamSpec *pspec)
+{
+    GstMfxScl *self = GST_MFX_SCL (obj);
+    GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    switch (id) {
+    case PROP_WIDTH:
+        priv->width = g_value_get_int (value);
+        break;
+    case PROP_HEIGHT:
+        priv->height = g_value_get_int (value);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, id, pspec);
+        break;
+    }
+}
+
+static void
+gst_mfx_scl_get_property (GObject *obj, guint id,
+            GValue *value, GParamSpec *pspec)
+{
+    GstMfxScl *self = GST_MFX_SCL (obj);
+    GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    switch (id) {
+    case PROP_WIDTH:
+        g_value_set_int (value, priv->width);
+        break;
+    case PROP_HEIGHT:
+        g_value_set_int (value, priv->height);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, id, pspec);
+        break;
+    }
 }
 
 static GstStateChangeReturn
@@ -380,11 +475,18 @@ gst_mfx_scl_change_state (GstElement * element,
             }
 
             s = MFXQueryIMPL (priv->mfx_session, &impl);
-            if (MFX_ERR_NONE == s)
-              g_debug ("MFXQueryIMPL -> %d", impl);
+            if (MFX_ERR_NONE == s) {
+                gchar *str = "Unknown";
+
+                if (MFX_IMPL_HARDWARE == impl)
+                  str = "Hardware";
+                if (MFX_IMPL_SOFTWARE == impl)
+                  str = "Software";
+                g_message ("MFXQueryIMPL -> %s", str);
+            }
             s = MFXQueryVersion (priv->mfx_session, &ver);
             if (MFX_ERR_NONE == s)
-              g_debug ("MFXQueryVersion -> %d, %d",
+              g_message ("MFXQueryVersion -> %d.%d",
                           ver.Major, ver.Minor);
         }
         break;
@@ -510,6 +612,9 @@ gst_mfx_scl_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
         }
         g_slice_free1 (sizeof (GstMfxSclTask) * priv->task_pool_len,
                     priv->task_pool);
+
+        while (g_queue_pop_head (&priv->exec_queue));
+        while (g_queue_pop_head (&priv->idle_queue));
     }
     /* Alloc new task pool */
     priv->task_pool_len = (reqs[0].NumFrameSuggested +
@@ -519,46 +624,41 @@ gst_mfx_scl_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
         guint i = 0;
 
         for (i=0; i<priv->task_pool_len; i++) {
-            /* Id */
-            priv->task_pool[i].id = i;
+            GstMfxSclTask *task = &priv->task_pool[i];
+
             /* Set input frame info */
-            memcpy (&priv->task_pool[i].input.Info,
+            memcpy (&task->input.Info,
                         &priv->mfx_video_param.vpp.In,
                         sizeof (mfxFrameInfo));
             /* Set output frame info */
-            memcpy (&priv->task_pool[i].output.Info,
+            memcpy (&task->output.Info,
                         &priv->mfx_video_param.vpp.Out,
                         sizeof (mfxFrameInfo));
             /* Alloc buffer for input: mfxFrameSurface1 */
-            priv->task_pool[i].input.Data.MemId =
+            task->input.Data.MemId =
                 g_slice_alloc0 (priv->in_buf_len);
             switch (priv->mfx_video_param.vpp.In.FourCC) {
             case MFX_FOURCC_NV12:
-                priv->task_pool[i].input.Data.Y =
-                    priv->task_pool[i].input.Data.MemId;
-                priv->task_pool[i].input.Data.U =
-                    priv->task_pool[i].input.Data.Y +
-                    width * height;
-                priv->task_pool[i].input.Data.V =
-                    priv->task_pool[i].input.Data.U + 1;
-                priv->task_pool[i].input.Data.Pitch = width;
+                task->input.Data.Y = task->input.Data.MemId;
+                task->input.Data.U = task->input.Data.Y + width * height;
+                task->input.Data.V = task->input.Data.U + 1;
+                task->input.Data.Pitch = width;
                 break;
             }
             /* Alloc buffer for output: mfxFrameSurface1 */
-            priv->task_pool[i].output.Data.MemId =
-                g_slice_alloc0 (priv->out_buf_len);
+            task->output.Data.MemId = g_slice_alloc0 (priv->out_buf_len);
             switch (priv->mfx_video_param.vpp.Out.FourCC) {
             case MFX_FOURCC_NV12:
-                priv->task_pool[i].output.Data.Y =
-                    priv->task_pool[i].output.Data.MemId;
-                priv->task_pool[i].output.Data.U =
-                    priv->task_pool[i].output.Data.Y +
+                task->output.Data.Y = task->output.Data.MemId;
+                task->output.Data.U = task->output.Data.Y +
                     priv->width * priv->height;
-                priv->task_pool[i].output.Data.V =
-                    priv->task_pool[i].output.Data.U + 1;
-                priv->task_pool[i].output.Data.Pitch = priv->width;
+                task->output.Data.V = task->output.Data.U + 1;
+                task->output.Data.Pitch = priv->width;
                 break;
             }
+
+            /* Push task to idle queue */
+            gst_mfx_scl_push_idle_task (self, task);
         }
     }
 
@@ -605,10 +705,12 @@ gst_mfx_scl_sink_pad_bufferalloc (GstPad *pad, guint64 offset,
 {
     GstMfxScl *self = GST_MFX_SCL (GST_OBJECT_PARENT (pad));
     GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
-    GstFlowReturn ret = GST_FLOW_OK;
-    gint free = -1;
+    GstMfxSclTask *task = NULL;
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    if (G_UNLIKELY (GST_FLOW_OK != priv->src_pad_ret))
+      return priv->src_pad_ret;
 
     /* No task pool, alloc a normal buffer */
     if (G_UNLIKELY (!priv->task_pool)) {
@@ -624,19 +726,19 @@ gst_mfx_scl_sink_pad_bufferalloc (GstPad *pad, guint64 offset,
     if (G_UNLIKELY (size != priv->in_buf_len))
       g_assert_not_reached ();
 
-    ret = gst_mfx_scl_get_free_task (self, &free);
-    if (GST_FLOW_OK != ret)
-      return ret;
+    task = gst_mfx_scl_pop_idle_task (self);
+    if (NULL == task)
+      return GST_FLOW_ERROR;
 
     *buf = gst_buffer_new ();
     if (!*buf)
       return GST_FLOW_ERROR;
-    GST_BUFFER_DATA (*buf) = priv->task_pool[free].input.Data.MemId;
+    GST_BUFFER_DATA (*buf) = task->input.Data.MemId;
     GST_BUFFER_SIZE (*buf) = priv->in_buf_len;
     GST_BUFFER_OFFSET (*buf) = GST_BUFFER_OFFSET_NONE;
     gst_buffer_set_caps (*buf, caps);
     /* Save the task in task_curr */
-    priv->task_curr = &priv->task_pool[free];
+    priv->task_curr = task;
 
     return GST_FLOW_OK;
 }
@@ -648,7 +750,6 @@ gst_mfx_scl_sink_pad_chain (GstPad *pad, GstBuffer *buf)
     GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
     GstMfxSclTask *task = NULL;
     GstFlowReturn ret = GST_FLOW_OK;
-    gint i = 0, tid = -1;
     gboolean retry = TRUE, mcpy = FALSE;
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
@@ -656,30 +757,30 @@ gst_mfx_scl_sink_pad_chain (GstPad *pad, GstBuffer *buf)
     /* Guess the input buf is in task_curr */
     if (priv->task_curr && GST_BUFFER_DATA (buf) ==
                 priv->task_curr->input.Data.MemId) {
-        tid = priv->task_curr->id;
+        task = priv->task_curr;
         priv->task_curr = NULL;
     } else {
+        gint i = 0;
+
         /* Oh, is wrong! find buf's owner: task */
         for (i=0; i<priv->task_pool_len; i++) {
             if (priv->task_pool[i].input.Data.MemId ==
                         GST_BUFFER_DATA (buf)) {
-                tid = i;
+                task = &priv->task_pool[i];
                 break;
             }
         }
     }
 
     /* Not found in task pool, may be is first alloced buffer.
-     * Get a free task to handle it and set mcpy = TRUE.
+     * Get a idle task to handle it and set mcpy = TRUE.
      */
-    if (-1 == tid) {
-        ret = gst_mfx_scl_get_free_task (self, &tid);
-        if (GST_FLOW_OK != ret)
+    if (NULL == task) {
+        task = gst_mfx_scl_pop_idle_task (self);
+        if (NULL == task)
           goto fail;
         mcpy = TRUE;
     }
-
-    task = &priv->task_pool[tid];
 
     /* Input: mfxFrameSurface1 */
     if (G_UNLIKELY (mcpy)) {
@@ -696,7 +797,7 @@ gst_mfx_scl_sink_pad_chain (GstPad *pad, GstBuffer *buf)
     /* Free input buffer: GstBuffer */
     gst_buffer_unref (buf);
 
-    /* Commit the task to MFX Encoder */
+    /* Commit the task to MFX VPP */
     do {
         mfxStatus s = MFX_ERR_NONE;
 
@@ -720,13 +821,45 @@ gst_mfx_scl_sink_pad_chain (GstPad *pad, GstBuffer *buf)
         }
     } while (retry);
 
-    /* Push task to task queue */
-    g_queue_push_tail (&priv->task_queue, task);
+    /* Push task to exec queue */
+    gst_mfx_scl_push_exec_task (self, task);
 
     return ret;
 
 fail:
 
     return ret;
+}
+
+static gboolean
+gst_mfx_scl_src_pad_activatepush (GstPad *pad, gboolean activate)
+{
+    GstMfxScl *self = GST_MFX_SCL (GST_OBJECT_PARENT (pad));
+    GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
+    gboolean ret = TRUE;
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    if (activate) {
+        ret = gst_pad_start_task (priv->src_pad,
+                    gst_mfx_scl_src_pad_task_handler, self);
+    } else {
+        ret = gst_pad_stop_task (priv->src_pad);
+    }
+
+    return ret;
+}
+
+static void
+gst_mfx_scl_src_pad_task_handler (gpointer data)
+{
+    GstMfxScl *self = GST_MFX_SCL (data);
+    GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
+
+    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
+
+    priv->src_pad_ret = gst_mfx_scl_sync_task (self, TRUE);
+    if (G_UNLIKELY (GST_FLOW_OK != priv->src_pad_ret))
+      gst_pad_pause_task (priv->src_pad);
 }
 
