@@ -355,18 +355,15 @@ gst_mfx_scl_sync_task (GstMfxScl *self, gboolean send)
                     task->sp, 1000);
         /* The async operation is ready, push to src pad */
         if (MFX_ERR_NONE == s) {
-            GstFlowReturn r = GST_FLOW_OK;
             GstBuffer *buffer = NULL;
 
             if (send) {
-                r = gst_pad_alloc_buffer (priv->src_pad,
+                ret = gst_pad_alloc_buffer (priv->src_pad,
                             GST_BUFFER_OFFSET_NONE,
                             priv->out_buf_len,
                             priv->src_pad_caps,
                             &buffer);
-                if (GST_FLOW_OK != r || NULL == buffer) {
-                    g_critical ("Alloc buffer from src pad failed!");
-                } else {
+                if (GST_FLOW_OK == ret && NULL != buffer) {
                     memcpy (GST_BUFFER_DATA (buffer),
                                 task->output.Data.MemId,
                                 priv->out_buf_len);
