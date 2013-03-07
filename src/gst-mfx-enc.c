@@ -351,10 +351,7 @@ gst_mfx_enc_sync_task (GstMfxEnc *self, gboolean send)
             
             /* Push task to idle queue */
             gst_mfx_enc_push_idle_task (self, task);
-        } else if (MFX_ERR_NONE < s) {
-            if (MFX_WRN_DEVICE_BUSY == s)
-              g_usleep (100);
-        } else {
+        } else if (MFX_ERR_NONE > s) {
             /* Push task to idle queue */
             gst_mfx_enc_push_idle_task (self, task);
         }
@@ -405,11 +402,18 @@ gst_mfx_enc_change_state (GstElement * element,
             }
 
             s = MFXQueryIMPL (priv->mfx_session, &impl);
-            if (MFX_ERR_NONE == s)
-              g_debug ("MFXQueryIMPL -> %d", impl);
+            if (MFX_ERR_NONE == s) {
+                gchar *str = "Unknown";
+
+                if (MFX_IMPL_HARDWARE == impl)
+                  str = "Hardware";
+                if (MFX_IMPL_SOFTWARE == impl)
+                  str = "Software";
+                g_message ("MFXQueryIMPL -> %s", str);
+            }
             s = MFXQueryVersion (priv->mfx_session, &ver);
             if (MFX_ERR_NONE == s)
-              g_debug ("MFXQueryVersion -> %d, %d",
+              g_message ("MFXQueryVersion -> %d.%d",
                           ver.Major, ver.Minor);
         }
         break;
