@@ -79,7 +79,7 @@ static void gst_mfx_scl_set_property (GObject *obj, guint id,
             const GValue *value, GParamSpec *pspec);
 static void gst_mfx_scl_get_property (GObject *obj, guint id,
             GValue *value, GParamSpec *pspec);
-static GstStateChangeReturn gst_mfx_scl_change_state (GstElement * element,
+static GstStateChangeReturn gst_mfx_scl_change_state (GstElement *element,
             GstStateChange transition);
 static gboolean gst_mfx_scl_sink_pad_setcaps (GstPad *pad,
             GstCaps *caps);
@@ -446,7 +446,7 @@ gst_mfx_scl_get_property (GObject *obj, guint id,
 }
 
 static GstStateChangeReturn
-gst_mfx_scl_change_state (GstElement * element,
+gst_mfx_scl_change_state (GstElement *element,
             GstStateChange transition)
 {
     GstMfxScl *self = GST_MFX_SCL (element);

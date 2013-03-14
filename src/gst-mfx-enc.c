@@ -59,7 +59,7 @@ static void gst_mfx_enc_push_idle_task (GstMfxEnc *self, GstMfxEncTask *task);
 static GstMfxEncTask * gst_mfx_enc_pop_idle_task (GstMfxEnc *self);
 static GstFlowReturn gst_mfx_enc_sync_task (GstMfxEnc *self, gboolean send);
 static void gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send);
-static GstStateChangeReturn gst_mfx_enc_change_state (GstElement * element,
+static GstStateChangeReturn gst_mfx_enc_change_state (GstElement *element,
             GstStateChange transition);
 static gboolean gst_mfx_enc_sink_pad_setcaps (GstPad *pad,
             GstCaps *caps);
@@ -374,7 +374,7 @@ gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send)
 }
 
 static GstStateChangeReturn
-gst_mfx_enc_change_state (GstElement * element,
+gst_mfx_enc_change_state (GstElement *element,
             GstStateChange transition)
 {
     GstMfxEnc *self = GST_MFX_ENC (element);
