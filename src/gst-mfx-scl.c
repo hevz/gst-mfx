@@ -92,13 +92,6 @@ static gboolean gst_mfx_scl_src_pad_activatepush (GstPad *pad,
             gboolean activate);
 static void gst_mfx_scl_src_pad_task_handler (gpointer data);
 
-static const GstElementDetails gst_mfx_scl_details =
-GST_ELEMENT_DETAILS (
-            "MFX Scaler",
-            "Filter/Converter/Video/Scaler",
-            "MFX Video Scaler",
-            "Heiher <admin@heiher.info>");
-
 static GstStaticPadTemplate gst_mfx_scl_sink_template =
 GST_STATIC_PAD_TEMPLATE (
             "sink",
@@ -199,7 +192,11 @@ gst_mfx_scl_base_init (gpointer klass)
             gst_static_pad_template_get (&gst_mfx_scl_sink_template));
     gst_element_class_add_pad_template (element_class,
             gst_static_pad_template_get (&gst_mfx_scl_src_template));
-    gst_element_class_set_details (element_class, &gst_mfx_scl_details);
+    gst_element_class_set_details_simple (element_class,
+                "MFX Scaler",
+                "Filter/Converter/Video/Scaler",
+                "MFX Video Scaler",
+                "Heiher <admin@heiher.info>");
 }
 
 static void

@@ -19,13 +19,6 @@ struct _GstMfxDecPrivate
     gchar *c;
 };
 
-static const GstElementDetails gst_mfx_dec_details =
-GST_ELEMENT_DETAILS (
-            "MFX Decoder",
-            "Codec/Decoder/Video",
-            "MFX Video Decoder",
-            "Heiher <admin@heiher.info>");
-
 GST_BOILERPLATE (GstMfxDec, gst_mfx_dec,
             GstElement, GST_TYPE_ELEMENT);
 
@@ -70,7 +63,11 @@ gst_mfx_dec_base_init (gpointer klass)
 
     g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
-    gst_element_class_set_details (element_class, &gst_mfx_dec_details);
+    gst_element_class_set_details_simple (element_class,
+                "MFX Decoder",
+                "Codec/Decoder/Video",
+                "MFX Video Decoder",
+                "Heiher <admin@heiher.info>");
 }
 
 static void
