@@ -472,7 +472,9 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     priv->mfx_video_param.mfx.TargetUsage = MFX_TARGETUSAGE_BEST_SPEED;
     priv->mfx_video_param.mfx.EncodedOrder = 0;
     priv->mfx_video_param.mfx.RateControlMethod = MFX_RATECONTROL_CBR;
+    priv->mfx_video_param.mfx.GopPicSize = 24;
     priv->mfx_video_param.mfx.GopRefDist = 1;
+    priv->mfx_video_param.mfx.IdrInterval = 0;
     priv->mfx_video_param.mfx.FrameInfo.Width = width;
     priv->mfx_video_param.mfx.FrameInfo.Height = height;
     priv->mfx_video_param.mfx.FrameInfo.FrameRateExtD = denominator;
