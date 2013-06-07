@@ -49,7 +49,6 @@ struct _GstMfxSclPrivate
     GCond idle_cond;
     GQueue idle_queue;
 
-    mfxSession mfx_session;
     mfxVideoParam mfx_video_param;
 
     GstFlowReturn src_pad_ret;
@@ -321,6 +320,7 @@ gst_mfx_scl_pop_idle_task (GstMfxScl *self)
 static GstFlowReturn
 gst_mfx_scl_sync_task (GstMfxScl *self, gboolean send)
 {
+    GstMfxBase *parent = GST_MFX_BASE (self);
     GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
     GstFlowReturn ret = GST_FLOW_OK;
     GstMfxSclTask *task = NULL;
@@ -331,7 +331,7 @@ gst_mfx_scl_sync_task (GstMfxScl *self, gboolean send)
     if (G_UNLIKELY (NULL == task))
       return GST_FLOW_UNEXPECTED;
     do {
-        s = MFXVideoCORE_SyncOperation (priv->mfx_session,
+        s = MFXVideoCORE_SyncOperation (parent->mfx_session,
                     task->sp, G_MAXUINT32);
         /* The async operation is ready, push to src pad */
         if (MFX_ERR_NONE == s) {
@@ -461,6 +461,7 @@ gst_mfx_scl_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
 {
     GstMfxScl *self = GST_MFX_SCL (GST_OBJECT_PARENT (pad));
     GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
+    GstMfxBase *parent = GST_MFX_BASE (self);
     GstStructure *structure = NULL;
     mfxStatus s = MFX_ERR_NONE;
     mfxFrameAllocRequest reqs[2];
@@ -515,13 +516,13 @@ gst_mfx_scl_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     priv->mfx_video_param.vpp.Out.CropY = 0;
     priv->mfx_video_param.vpp.Out.CropW = priv->width;
     priv->mfx_video_param.vpp.Out.CropH = priv->height;
-    s = MFXVideoVPP_Init (priv->mfx_session, &priv->mfx_video_param);
+    s = MFXVideoVPP_Init (parent->mfx_session, &priv->mfx_video_param);
     if (MFX_ERR_NONE != s) {
         GST_ERROR ("MFXVideoVPP_Init failed(%d)!", s);
         goto fail;
     }
 
-    s = MFXVideoVPP_GetVideoParam (priv->mfx_session, &priv->mfx_video_param);
+    s = MFXVideoVPP_GetVideoParam (parent->mfx_session, &priv->mfx_video_param);
     if (MFX_ERR_NONE != s) {
         GST_ERROR ("MFXVideoVPP_GetVideoParam failed(%d)!", s);
         goto fail;
@@ -543,7 +544,7 @@ gst_mfx_scl_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
         break;
     }
 
-    s = MFXVideoVPP_QueryIOSurf (priv->mfx_session,
+    s = MFXVideoVPP_QueryIOSurf (parent->mfx_session,
                 &priv->mfx_video_param, reqs);
     if (MFX_ERR_NONE != s) {
         GST_ERROR ("MFXVideoVPP_QueryIOSurf failed(%d)!", s);
@@ -693,6 +694,7 @@ gst_mfx_scl_sink_pad_chain (GstPad *pad, GstBuffer *buf)
 {
     GstMfxScl *self = GST_MFX_SCL (GST_OBJECT_PARENT (pad));
     GstMfxSclPrivate *priv = GST_MFX_SCL_GET_PRIVATE (self);
+    GstMfxBase *parent = GST_MFX_BASE (self);
     GstMfxSclTask *task = NULL;
     GstFlowReturn ret = GST_FLOW_OK;
     gboolean retry = TRUE, mcpy = FALSE;
@@ -744,7 +746,7 @@ gst_mfx_scl_sink_pad_chain (GstPad *pad, GstBuffer *buf)
     do {
         mfxStatus s = MFX_ERR_NONE;
 
-        s = MFXVideoVPP_RunFrameVPPAsync (priv->mfx_session,
+        s = MFXVideoVPP_RunFrameVPPAsync (parent->mfx_session,
                     &task->input, &task->output, NULL, &task->sp);
 
         if (MFX_ERR_NONE < s && !task->sp) {
