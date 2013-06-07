@@ -61,7 +61,7 @@ static GType
 gst_mfx_base_impl_get_type (void)
 {
     static GType impl_type = 0;
-    static const GEnumValue impl[] =
+    static const GFlagsValue impl[] =
     {
         { MFX_IMPL_AUTO, "Auto", "auto" },
         { MFX_IMPL_SOFTWARE, "Software", "software" },
@@ -75,7 +75,7 @@ gst_mfx_base_impl_get_type (void)
     };
 
     if (!impl_type)
-      impl_type = g_enum_register_static ("GstMfxBaseImplType", impl);
+      impl_type = g_flags_register_static ("GstMfxBaseImplType", impl);
 
     return impl_type;
 }
@@ -86,7 +86,7 @@ static GType
 gst_mfx_base_io_pattern_get_type (void)
 {
     static GType io_pattern_type = 0;
-    static const GEnumValue io_pattern[] =
+    static const GFlagsValue io_pattern[] =
     {
         { MFX_IOPATTERN_IN_VIDEO_MEMORY, "Video meory in", "video-mem-in" },
         { MFX_IOPATTERN_IN_SYSTEM_MEMORY, "System memory in", "system-mem-in" },
@@ -98,7 +98,7 @@ gst_mfx_base_io_pattern_get_type (void)
     };
 
     if (!io_pattern_type)
-      io_pattern_type = g_enum_register_static ("GstMfxBaseIOPatternType",
+      io_pattern_type = g_flags_register_static ("GstMfxBaseIOPatternType",
                   io_pattern);
 
     return io_pattern_type;
@@ -144,7 +144,7 @@ gst_mfx_base_set_property (GObject *obj, guint id,
 
     switch (id) {
     case PROP_IMPL:
-        priv->impl = g_value_get_enum (value);
+        priv->impl = g_value_get_flags (value);
         break;
     case PROP_VERSION:
         {
@@ -166,7 +166,7 @@ gst_mfx_base_set_property (GObject *obj, guint id,
         priv->protected = g_value_get_uint (value);
         break;
     case PROP_IO_PATTERN:
-        priv->io_pattern = g_value_get_enum (value);
+        priv->io_pattern = g_value_get_flags (value);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, id, pspec);
@@ -183,7 +183,7 @@ gst_mfx_base_get_property (GObject *obj, guint id,
 
     switch (id) {
     case PROP_IMPL:
-        g_value_set_enum (value, priv->impl);
+        g_value_set_flags (value, priv->impl);
         break;
     case PROP_VERSION:
         {
@@ -200,7 +200,7 @@ gst_mfx_base_get_property (GObject *obj, guint id,
         g_value_set_uint (value, priv->protected);
         break;
     case PROP_IO_PATTERN:
-        g_value_set_enum (value, priv->io_pattern);
+        g_value_set_flags (value, priv->io_pattern);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, id, pspec);
@@ -292,7 +292,7 @@ gst_mfx_base_class_init (GstMfxBaseClass *klass)
 
     /* Properties */
     g_object_class_install_property (obj_class, PROP_IMPL,
-                g_param_spec_enum ("impl", "Implentation",
+                g_param_spec_flags ("impl", "Implentation",
                     "Implentation.",
                     GST_TYPE_MFX_BASE_IMPL,
                     GST_MFX_BASE_IMPL_DEFAULT,
@@ -313,7 +313,7 @@ gst_mfx_base_class_init (GstMfxBaseClass *klass)
                     0, G_MAXUINT, GST_MFX_BASE_PROTECTED_DEFAULT,
                     G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
     g_object_class_install_property (obj_class, PROP_IO_PATTERN,
-                g_param_spec_enum ("io-pattern", "IO Pattern",
+                g_param_spec_flags ("io-pattern", "IO Pattern",
                     "IO Pattern.",
                     GST_TYPE_MFX_BASE_IO_PATTERN,
                     GST_MFX_BASE_IO_PATTERN_DEFAULT,
