@@ -255,7 +255,6 @@ gst_mfx_base_change_state (GstElement *element,
         }
         break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
-        MFXVideoENCODE_Close (self->mfx_session);
         break;
     case GST_STATE_CHANGE_READY_TO_NULL:
         MFXClose (self->mfx_session);

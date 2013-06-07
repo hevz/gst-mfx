@@ -351,6 +351,7 @@ gst_mfx_enc_change_state (GstElement *element,
             GstStateChange transition)
 {
     GstMfxEnc *self = GST_MFX_ENC (element);
+    GstMfxBase *parent = GST_MFX_BASE (self);
     GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
 
     if ((GST_STATE_CHANGE_NULL_TO_READY == transition) ||
@@ -366,6 +367,7 @@ gst_mfx_enc_change_state (GstElement *element,
         break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
         gst_mfx_enc_flush_frames (self, FALSE);
+        MFXVideoENCODE_Close (parent->mfx_session);
         break;
     case GST_STATE_CHANGE_READY_TO_NULL:
         break;
