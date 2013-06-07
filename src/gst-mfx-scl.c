@@ -169,7 +169,17 @@ gst_mfx_scl_constructor (GType type,
 static void
 gst_mfx_scl_constructed (GObject *obj)
 {
+    guint16 io_pattern = 0;
+
     G_OBJECT_CLASS (parent_class)->constructed (obj);
+
+    /* Default IOPattern for scaler */
+    g_object_get (obj, "io-pattern", &io_pattern, NULL);
+    if (0 == io_pattern)
+      g_object_set (obj,
+                  "io-pattern", (MFX_IOPATTERN_IN_SYSTEM_MEMORY |
+                      MFX_IOPATTERN_OUT_SYSTEM_MEMORY),
+                  NULL);
 }
 
 static void
@@ -492,10 +502,11 @@ gst_mfx_scl_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     }
 
     memset (&priv->mfx_video_param, 0, sizeof (mfxVideoParam));
-    priv->mfx_video_param.AsyncDepth = 0;
-    priv->mfx_video_param.Protected = 0;
-    priv->mfx_video_param.IOPattern = MFX_IOPATTERN_IN_SYSTEM_MEMORY |
-                                    MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
+    g_object_get (self,
+                "async-depth", &priv->mfx_video_param.AsyncDepth,
+                "protected", &priv->mfx_video_param.Protected,
+                "io-pattern", &priv->mfx_video_param.IOPattern,
+                NULL);
     priv->mfx_video_param.vpp.In.Width = width;
     priv->mfx_video_param.vpp.In.Height = height;
     priv->mfx_video_param.vpp.In.FrameRateExtD = denominator;

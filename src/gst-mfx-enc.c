@@ -150,7 +150,16 @@ gst_mfx_enc_constructor (GType type,
 static void
 gst_mfx_enc_constructed (GObject *obj)
 {
+    guint16 io_pattern = 0;
+
     G_OBJECT_CLASS (parent_class)->constructed (obj);
+
+    /* Default IOPattern for encoder */
+    g_object_get (obj, "io-pattern", &io_pattern, NULL);
+    if (0 == io_pattern)
+      g_object_set (obj,
+                  "io-pattern", MFX_IOPATTERN_IN_SYSTEM_MEMORY,
+                  NULL);
 }
 
 static void
@@ -418,9 +427,11 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
       goto fail;
 
     memset (&priv->mfx_video_param, 0, sizeof (mfxVideoParam));
-    priv->mfx_video_param.AsyncDepth = 0;
-    priv->mfx_video_param.Protected = 0;
-    priv->mfx_video_param.IOPattern = MFX_IOPATTERN_IN_SYSTEM_MEMORY;
+    g_object_get (self,
+                "async-depth", &priv->mfx_video_param.AsyncDepth,
+                "protected", &priv->mfx_video_param.Protected,
+                "io-pattern", &priv->mfx_video_param.IOPattern,
+                NULL);
     priv->mfx_video_param.mfx.CodecId = MFX_CODEC_AVC;
     priv->mfx_video_param.mfx.CodecProfile = MFX_PROFILE_AVC_MAIN;
     priv->mfx_video_param.mfx.TargetKbps = 1024;
