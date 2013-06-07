@@ -3,7 +3,7 @@
  Name        : gst-mfx.c
  Author      : Heiher <admin@heiher.info>
  Version     : 0.0.1
- Copyright   : Copyright (C) 2012 everyone.
+ Copyright   : Copyright (C) 2013 everyone.
  Description : 
  ============================================================================
  */

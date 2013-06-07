@@ -3,7 +3,7 @@
  Name        : gst-mfx-enc.h
  Author      : Heiher <admin@heiher.info>
  Version     : 0.0.1
- Copyright   : Copyright (C) 2012 everyone.
+ Copyright   : Copyright (C) 2013 everyone.
  Description : 
  ============================================================================
  */
@@ -12,6 +12,8 @@
 #define __GST_MFX_ENC_H__
 
 #include <gst/gst.h>
+
+#include "gst-mfx-base.h"
 
 G_BEGIN_DECLS
 
@@ -27,12 +29,12 @@ typedef struct _GstMfxEncClass GstMfxEncClass;
 
 struct _GstMfxEnc
 {
-    GstElement parent_instance;
+    GstMfxBase parent_instance;
 };
 
 struct _GstMfxEncClass
 {
-    GstElementClass parent_class;
+    GstMfxBaseClass parent_class;
 };
 
 GType gst_mfx_enc_get_type (void);

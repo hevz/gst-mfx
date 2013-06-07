@@ -3,7 +3,7 @@
  Name        : gst-mfx-scl.h
  Author      : Heiher <admin@heiher.info>
  Version     : 0.0.1
- Copyright   : Copyright (C) 2012 everyone.
+ Copyright   : Copyright (C) 2013 everyone.
  Description : 
  ============================================================================
  */
@@ -12,6 +12,8 @@
 #define __GST_MFX_SCL_H__
 
 #include <gst/gst.h>
+
+#include "gst-mfx-base.h"
 
 G_BEGIN_DECLS
 
@@ -27,12 +29,12 @@ typedef struct _GstMfxSclClass GstMfxSclClass;
 
 struct _GstMfxScl
 {
-    GstElement parent_instance;
+    GstMfxBase parent_instance;
 };
 
 struct _GstMfxSclClass
 {
-    GstElementClass parent_class;
+    GstMfxBaseClass parent_class;
 };
 
 GType gst_mfx_scl_get_type (void);

@@ -3,17 +3,15 @@
  Name        : gst-mfx-enc.c
  Author      : Heiher <admin@heiher.info>
  Version     : 0.0.1
- Copyright   : Copyright (C) 2012 everyone.
+ Copyright   : Copyright (C) 2013 everyone.
  Description : 
  ============================================================================
  */
 
-#include <string.h>
-#include <mfxvideo.h>
-
 #include "gst-mfx-enc.h"
 
 #define GST_MFX_ENC_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), GST_TYPE_MFX_ENC, GstMfxEncPrivate))
+#define GST_CAT_DEFAULT (mfxenc_debug)
 
 typedef struct _GstMfxEncPrivate GstMfxEncPrivate;
 typedef struct _GstMfxEncTask GstMfxEncTask;
@@ -37,7 +35,6 @@ struct _GstMfxEncPrivate
     GCond idle_cond;
     GQueue idle_queue;
 
-    mfxSession mfx_session;
     mfxVideoParam mfx_video_param;
 
     GstFlowReturn src_pad_ret;
@@ -72,6 +69,8 @@ static gboolean gst_mfx_enc_src_pad_activatepush (GstPad *pad,
             gboolean activate);
 static void gst_mfx_enc_src_pad_task_handler (gpointer data);
 
+GST_DEBUG_CATEGORY_STATIC (mfxenc_debug);
+
 static GstStaticPadTemplate gst_mfx_enc_sink_template =
 GST_STATIC_PAD_TEMPLATE (
             "sink",
@@ -96,13 +95,11 @@ GST_STATIC_PAD_TEMPLATE (
             );
 
 GST_BOILERPLATE (GstMfxEnc, gst_mfx_enc,
-            GstElement, GST_TYPE_ELEMENT);
+            GstMfxBase, GST_TYPE_MFX_BASE);
 
 static void
 gst_mfx_enc_dispose (GObject *obj)
 {
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
     G_OBJECT_CLASS (parent_class)->dispose (obj);
 }
 
@@ -111,8 +108,6 @@ gst_mfx_enc_finalize (GObject *obj)
 {
     GstMfxEnc *self = GST_MFX_ENC (obj);
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     g_queue_clear (&priv->idle_queue);
     g_cond_clear (&priv->idle_cond);
@@ -149,16 +144,12 @@ gst_mfx_enc_constructor (GType type,
             guint n,
             GObjectConstructParam *param)
 {
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
     return G_OBJECT_CLASS (parent_class)->constructor (type, n, param);
 }
 
 static void
 gst_mfx_enc_constructed (GObject *obj)
 {
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
     G_OBJECT_CLASS (parent_class)->constructed (obj);
 }
 
@@ -166,8 +157,6 @@ static void
 gst_mfx_enc_base_init (gpointer klass)
 {
     GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     gst_element_class_add_pad_template (element_class,
             gst_static_pad_template_get (&gst_mfx_enc_sink_template));
@@ -186,8 +175,6 @@ gst_mfx_enc_class_init (GstMfxEncClass *klass)
     GObjectClass *obj_class = G_OBJECT_CLASS (klass);
     GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
 
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
     obj_class->constructor = gst_mfx_enc_constructor;
     obj_class->constructed = gst_mfx_enc_constructed;
     obj_class->dispose = gst_mfx_enc_dispose;
@@ -196,6 +183,8 @@ gst_mfx_enc_class_init (GstMfxEncClass *klass)
     element_class->change_state = gst_mfx_enc_change_state;
 
     g_type_class_add_private (klass, sizeof (GstMfxEncPrivate));
+
+    GST_DEBUG_CATEGORY_INIT (mfxenc_debug, "mfxenc", 0, "MFX Encoder");
 }
 
 static void
@@ -203,8 +192,6 @@ gst_mfx_enc_init (GstMfxEnc *self,
             GstMfxEncClass *klass)
 {
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     g_mutex_init (&priv->exec_mutex);
     g_cond_init (&priv->exec_cond);
@@ -240,8 +227,6 @@ gst_mfx_enc_push_exec_task (GstMfxEnc *self, GstMfxEncTask *task)
 {
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
 
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
     g_return_if_fail (NULL != task);
 
     g_mutex_lock (&priv->exec_mutex);
@@ -255,8 +240,6 @@ gst_mfx_enc_pop_exec_task (GstMfxEnc *self)
 {
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
     GstMfxEncTask *task = NULL;
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     g_mutex_lock (&priv->exec_mutex);
     while (priv->src_pad_push_status &&
@@ -272,8 +255,6 @@ static void
 gst_mfx_enc_push_idle_task (GstMfxEnc *self, GstMfxEncTask *task)
 {
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     g_return_if_fail (NULL != task);
 
@@ -294,8 +275,6 @@ gst_mfx_enc_pop_idle_task (GstMfxEnc *self)
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
     GstMfxEncTask *task = NULL;
 
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
     g_mutex_lock (&priv->idle_mutex);
     while (priv->src_pad_push_status &&
                 !g_queue_peek_head (&priv->idle_queue))
@@ -309,19 +288,18 @@ gst_mfx_enc_pop_idle_task (GstMfxEnc *self)
 static GstFlowReturn
 gst_mfx_enc_sync_task (GstMfxEnc *self, gboolean send)
 {
+    GstMfxBase *parent = GST_MFX_BASE (self);
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
     GstFlowReturn ret = GST_FLOW_OK;
     GstMfxEncTask *task = NULL;
     mfxStatus s = MFX_ERR_NONE;
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     /* Pop task from exec queue */
     task = gst_mfx_enc_pop_exec_task (self);
     if (G_UNLIKELY (NULL == task))
       return GST_FLOW_UNEXPECTED;
     do {
-        s = MFXVideoCORE_SyncOperation (priv->mfx_session,
+        s = MFXVideoCORE_SyncOperation (parent->mfx_session,
                     task->sp, G_MAXUINT32);
         /* The async operation is ready, push to src pad */
         if (MFX_ERR_NONE == s) {
@@ -364,8 +342,6 @@ gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send)
 {
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
 
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
     while (g_queue_peek_head (&priv->exec_queue))
       gst_mfx_enc_sync_task (self, send);
 }
@@ -375,56 +351,34 @@ gst_mfx_enc_change_state (GstElement *element,
             GstStateChange transition)
 {
     GstMfxEnc *self = GST_MFX_ENC (element);
-    GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
     GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
 
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
-    ret = parent_class->change_state (element, transition);
-    if (GST_STATE_CHANGE_FAILURE == ret)
-      goto out;
+    if ((GST_STATE_CHANGE_NULL_TO_READY == transition) ||
+        (GST_STATE_CHANGE_READY_TO_PAUSED == transition) ||
+        (GST_STATE_CHANGE_PAUSED_TO_PLAYING == transition)) {
+        ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
+        if (GST_STATE_CHANGE_FAILURE == ret)
+          goto out;
+    }
 
     switch (transition) {
     case GST_STATE_CHANGE_NULL_TO_READY:
-        {
-            mfxStatus s = MFX_ERR_NONE;
-            mfxVersion ver;
-            mfxIMPL impl = MFX_IMPL_AUTO_ANY;
-
-            ver.Minor = 1;
-            ver.Major = 1;
-            s = MFXInit (impl, &ver, &priv->mfx_session);
-            if (MFX_ERR_NONE != s) {
-                g_critical ("MFXInit failed(%d)!", s);
-                ret = GST_STATE_CHANGE_FAILURE;
-                goto out;
-            }
-
-            s = MFXQueryIMPL (priv->mfx_session, &impl);
-            if (MFX_ERR_NONE == s) {
-                gchar *str = "Unknown";
-
-                if (MFX_IMPL_HARDWARE == impl)
-                  str = "Hardware";
-                if (MFX_IMPL_SOFTWARE == impl)
-                  str = "Software";
-                g_message ("MFXQueryIMPL -> %s", str);
-            }
-            s = MFXQueryVersion (priv->mfx_session, &ver);
-            if (MFX_ERR_NONE == s)
-              g_message ("MFXQueryVersion -> %d.%d",
-                          ver.Major, ver.Minor);
-        }
         break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
         gst_mfx_enc_flush_frames (self, FALSE);
-        MFXVideoENCODE_Close (priv->mfx_session);
         break;
     case GST_STATE_CHANGE_READY_TO_NULL:
-        MFXClose (priv->mfx_session);
         break;
     default:
         break;
+    }
+
+    if ((GST_STATE_CHANGE_PLAYING_TO_PAUSED == transition) ||
+        (GST_STATE_CHANGE_PAUSED_TO_READY == transition) ||
+        (GST_STATE_CHANGE_READY_TO_NULL == transition)) {
+        ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
+        if (GST_STATE_CHANGE_FAILURE == ret)
+          goto out;
     }
 
 out:
@@ -436,13 +390,12 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
 {
     GstMfxEnc *self = GST_MFX_ENC (GST_OBJECT_PARENT (pad));
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
+    GstMfxBase *parent = GST_MFX_BASE (self);
     GstStructure *structure = NULL;
     mfxStatus s = MFX_ERR_NONE;
     mfxFrameAllocRequest req;
     gint width = 0, height = 0;
     gint numerator = 0, denominator = 0;
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     if (!GST_CAPS_IS_SIMPLE (caps))
       goto fail;
@@ -486,15 +439,15 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     priv->mfx_video_param.mfx.FrameInfo.CropY = 0;
     priv->mfx_video_param.mfx.FrameInfo.CropW = width;
     priv->mfx_video_param.mfx.FrameInfo.CropH = height;
-    s = MFXVideoENCODE_Init (priv->mfx_session, &priv->mfx_video_param);
+    s = MFXVideoENCODE_Init (parent->mfx_session, &priv->mfx_video_param);
     if (MFX_ERR_NONE != s) {
-        g_critical ("MFXVideoENCODE_Init failed(%d)!", s);
+        GST_ERROR ("MFXVideoENCODE_Init failed(%d)!", s);
         goto fail;
     }
 
-    s = MFXVideoENCODE_GetVideoParam (priv->mfx_session, &priv->mfx_video_param);
+    s = MFXVideoENCODE_GetVideoParam (parent->mfx_session, &priv->mfx_video_param);
     if (MFX_ERR_NONE != s) {
-        g_critical ("MFXVideoENCODE_GetVideoParam failed(%d)!", s);
+        GST_ERROR ("MFXVideoENCODE_GetVideoParam failed(%d)!", s);
         goto fail;
     }
     switch (priv->mfx_video_param.mfx.FrameInfo.FourCC) {
@@ -506,10 +459,10 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     }
     priv->bs_buf_len = priv->mfx_video_param.mfx.BufferSizeInKB * 1024;
 
-    s = MFXVideoENCODE_QueryIOSurf (priv->mfx_session,
+    s = MFXVideoENCODE_QueryIOSurf (parent->mfx_session,
                 &priv->mfx_video_param, &req);
     if (MFX_ERR_NONE != s) {
-        g_critical ("MFXVideoENCODE_QueryIOSurf failed(%d)!", s);
+        GST_ERROR ("MFXVideoENCODE_QueryIOSurf failed(%d)!", s);
         goto fail;
     }
     /* Free previous task pool */
@@ -584,8 +537,6 @@ gst_mfx_enc_sink_pad_event (GstPad *pad, GstEvent *event)
     GstMfxEnc *self = GST_MFX_ENC (GST_OBJECT_PARENT (pad));
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
 
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
     switch (GST_EVENT_TYPE (event)) {
     case GST_EVENT_EOS:
         gst_mfx_enc_flush_frames (self, TRUE);
@@ -604,8 +555,6 @@ gst_mfx_enc_sink_pad_bufferalloc (GstPad *pad, guint64 offset,
     GstMfxEnc *self = GST_MFX_ENC (GST_OBJECT_PARENT (pad));
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
     GstMfxEncTask *task = NULL;
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     if (G_UNLIKELY (GST_FLOW_OK != priv->src_pad_ret))
       return priv->src_pad_ret;
@@ -647,11 +596,10 @@ gst_mfx_enc_sink_pad_chain (GstPad *pad, GstBuffer *buf)
 {
     GstMfxEnc *self = GST_MFX_ENC (GST_OBJECT_PARENT (pad));
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
+    GstMfxBase *parent = GST_MFX_BASE (self);
     GstMfxEncTask *task = NULL;
     GstFlowReturn ret = GST_FLOW_OK;
     gboolean retry = TRUE, mcpy = FALSE;
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     /* Guess the input buf is in task_curr */
     if (priv->task_curr && GST_BUFFER_DATA (buf) ==
@@ -700,7 +648,7 @@ gst_mfx_enc_sink_pad_chain (GstPad *pad, GstBuffer *buf)
     do {
         mfxStatus s = MFX_ERR_NONE;
 
-        s = MFXVideoENCODE_EncodeFrameAsync (priv->mfx_session, NULL,
+        s = MFXVideoENCODE_EncodeFrameAsync (parent->mfx_session, NULL,
                     &task->input, &task->output, &task->sp);
 
         if (MFX_ERR_NONE < s && !task->sp) {
@@ -712,7 +660,7 @@ gst_mfx_enc_sink_pad_chain (GstPad *pad, GstBuffer *buf)
         } else if (MFX_ERR_MORE_DATA == s) {
             retry = TRUE;
         } else if (MFX_ERR_NONE != s) {
-            g_critical ("MFXVideoENCODE_EncodeFrameAsync failed(%d)!", s);
+            GST_ERROR ("MFXVideoENCODE_EncodeFrameAsync failed(%d)!", s);
             ret = GST_FLOW_ERROR;
             goto fail;
         } else {
@@ -737,8 +685,6 @@ gst_mfx_enc_src_pad_activatepush (GstPad *pad, gboolean activate)
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
     gboolean ret = TRUE;
 
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
-
     if (activate) {
         priv->src_pad_push_status = TRUE;
         ret = gst_pad_start_task (priv->src_pad,
@@ -760,8 +706,6 @@ gst_mfx_enc_src_pad_task_handler (gpointer data)
 {
     GstMfxEnc *self = GST_MFX_ENC (data);
     GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
-
-    g_debug ("%s:%d[%s]", __FILE__, __LINE__, __FUNCTION__);
 
     priv->src_pad_ret = gst_mfx_enc_sync_task (self, TRUE);
     if (G_UNLIKELY (GST_FLOW_OK != priv->src_pad_ret))
