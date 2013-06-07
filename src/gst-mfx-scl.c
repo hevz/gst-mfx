@@ -278,6 +278,7 @@ gst_mfx_scl_pop_exec_task (GstMfxScl *self)
     g_mutex_lock (&priv->exec_mutex);
     while (priv->src_pad_push_status &&
                 !g_queue_peek_head (&priv->exec_queue))
+      g_cond_wait (&priv->exec_cond, &priv->exec_mutex);
     task = g_queue_pop_head (&priv->exec_queue);
     g_mutex_unlock (&priv->exec_mutex);
 
