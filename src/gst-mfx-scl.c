@@ -58,8 +58,6 @@ struct _GstMfxSclPrivate
 
 struct _GstMfxSclTask
 {
-    gint id;
-
     mfxFrameSurface1 input;
     mfxFrameSurface1 output;
     mfxSyncPoint sp;
