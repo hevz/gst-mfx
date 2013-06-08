@@ -13,7 +13,7 @@
 
 #include <gst/gst.h>
 
-#include "gst-mfx-base.h"
+#include "gst-mfx-trans.h"
 
 G_BEGIN_DECLS
 
@@ -29,12 +29,12 @@ typedef struct _GstMfxSclClass GstMfxSclClass;
 
 struct _GstMfxScl
 {
-    GstMfxBase parent_instance;
+    GstMfxTrans parent_instance;
 };
 
 struct _GstMfxSclClass
 {
-    GstMfxBaseClass parent_class;
+    GstMfxTransClass parent_class;
 };
 
 GType gst_mfx_scl_get_type (void);
