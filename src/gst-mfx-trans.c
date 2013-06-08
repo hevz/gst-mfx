@@ -396,11 +396,12 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
 {
     GstMfxTrans *self = GST_MFX_TRANS (GST_OBJECT_PARENT (pad));
     GstMfxTransPrivate *priv = GST_MFX_TRANS_GET_PRIVATE (self);
+    GstMfxTransClass *mfx_trans_class = GST_MFX_TRANS_GET_CLASS (self);
     GstMfxBase *parent = GST_MFX_BASE (self);
     GstStructure *structure = NULL;
     mfxStatus s = MFX_ERR_NONE;
     mfxFrameAllocRequest reqs[2];
-    gint width = 0, height = 0;
+    gint width = 0, height = 0, width_out = 0, height_out = 0;
     gint numerator = 0, denominator = 0;
 
     if (!GST_CAPS_IS_SIMPLE (caps))
@@ -447,11 +448,17 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     priv->mfx_video_param.vpp.Out.CropY = 0;
     priv->mfx_video_param.vpp.Out.CropW = width;
     priv->mfx_video_param.vpp.Out.CropH = height;
+    /* Call subclass to update params */
+    if (mfx_trans_class->update_params)
+      mfx_trans_class->update_params (self, &priv->mfx_video_param);
     s = MFXVideoVPP_Init (parent->mfx_session, &priv->mfx_video_param);
     if (MFX_ERR_NONE != s) {
         GST_ERROR ("MFXVideoVPP_Init failed(%d)!", s);
         goto fail;
     }
+
+    width_out = priv->mfx_video_param.vpp.Out.Width;
+    height_out = priv->mfx_video_param.vpp.Out.Height;
 
     s = MFXVideoVPP_GetVideoParam (parent->mfx_session, &priv->mfx_video_param);
     if (MFX_ERR_NONE != s) {
@@ -469,9 +476,9 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     /* Calc output buffer length */
     switch (priv->mfx_video_param.vpp.Out.FourCC) {
     case MFX_FOURCC_NV12:
-        priv->out_buf_len = width * height +
-            (width>>1) * (height>>1) +
-            (width>>1) * (height>>1);
+        priv->out_buf_len = width_out * height_out +
+            (width_out>>1) * (height_out>>1) +
+            (width_out>>1) * (height_out>>1);
         break;
     }
 
@@ -531,9 +538,9 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
             switch (priv->mfx_video_param.vpp.Out.FourCC) {
             case MFX_FOURCC_NV12:
                 task->output.Data.Y = task->output.Data.MemId;
-                task->output.Data.U = task->output.Data.Y + width * height;
+                task->output.Data.U = task->output.Data.Y + width_out * height_out;
                 task->output.Data.V = task->output.Data.U + 1;
-                task->output.Data.Pitch = width;
+                task->output.Data.Pitch = width_out;
                 break;
             }
 
@@ -545,8 +552,8 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     if (priv->src_pad_caps)
       gst_caps_unref (priv->src_pad_caps);
     structure = gst_structure_new ("video/x-raw-yuv",
-                "width", G_TYPE_INT, width,
-                "height", G_TYPE_INT, height,
+                "width", G_TYPE_INT, width_out,
+                "height", G_TYPE_INT, height_out,
                 "framerate", GST_TYPE_FRACTION, numerator, denominator,
                 "format", GST_TYPE_FOURCC,
                                 GST_MAKE_FOURCC ('N', 'V', '1', '2'),

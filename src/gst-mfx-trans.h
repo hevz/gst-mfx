@@ -35,6 +35,9 @@ struct _GstMfxTrans
 struct _GstMfxTransClass
 {
     GstMfxBaseClass parent_class;
+
+    /* Virtual methods for subclass */
+    void (*update_params) (GstMfxTrans *trans, mfxVideoParam *params);
 };
 
 GType gst_mfx_trans_get_type (void);
