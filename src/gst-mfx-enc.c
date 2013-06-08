@@ -10,14 +10,70 @@
 
 #include "gst-mfx-enc.h"
 
+#define GST_MFX_ENC_CODEC_ID_DEFAULT            MFX_CODEC_AVC
+#define GST_MFX_ENC_CODEC_PROFILE_DEFAULT       MFX_PROFILE_AVC_MAIN
+#define GST_MFX_ENC_CODEC_LEVEL_DEFAULT         0
+#define GST_MFX_ENC_NUM_THREAD_DEFAULT          0
+#define GST_MFX_ENC_TARGET_USAGE_DEFAULT        MFX_TARGETUSAGE_BEST_SPEED
+#define GST_MFX_ENC_GOP_PIC_SIZE_DEFAULT        24
+#define GST_MFX_ENC_GOP_REF_DIST_DEFAULT        1
+#define GST_MFX_ENC_GOP_OPT_FLAG_DEFAULT        MFX_GOP_CLOSED
+#define GST_MFX_ENC_IDR_INTERVAL_DEFAULT        0
+#define GST_MFX_ENC_RATE_CTL_METHOD_DEFAULT     MFX_RATECONTROL_CBR
+#define GST_MFX_ENC_INIT_DELAY_DEFAULT          0
+#define GST_MFX_ENC_BITRATE_DEFAULT             2048
+#define GST_MFX_ENC_MAX_BITRATE_DEFAULT         0
+#define GST_MFX_ENC_NUM_SLICE_DEFAULT           0
+#define GST_MFX_ENC_NUM_REF_FRAME_DEFAULT       0
+#define GST_MFX_ENC_ENCODED_ORDER_DEFAULT       0
+
 #define GST_MFX_ENC_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), GST_TYPE_MFX_ENC, GstMfxEncPrivate))
 #define GST_CAT_DEFAULT (mfxenc_debug)
+
+enum
+{
+    PROP_ZERO,
+    PROP_CODEC_ID,
+    PROP_CODEC_PROFILE,
+    PROP_CODEC_LEVEL,
+    PROP_NUM_THREAD,
+    PROP_TARGET_USAGE,
+    PROP_GOP_PIC_SIZE,
+    PROP_GOP_REF_DIST,
+    PROP_GOP_OPT_FLAG,
+    PROP_IDR_INTERVAL,
+    PROP_RATE_CTL_METHOD,
+    PROP_INIT_DELAY,
+    PROP_BITRATE,
+    PROP_MAX_BITRATE,
+    PROP_NUM_SLICE,
+    PROP_NUM_REF_FRAME,
+    PROP_ENCODED_ORDER,
+    N_PROPERTIES
+};
 
 typedef struct _GstMfxEncPrivate GstMfxEncPrivate;
 typedef struct _GstMfxEncTask GstMfxEncTask;
 
 struct _GstMfxEncPrivate
 {
+    guint32 codec_id;
+    guint16 codec_profile;
+    guint16 codec_level;
+    guint16 num_thread;
+    guint16 target_usage;
+    guint16 gop_pic_size;
+    guint16 gop_ref_dist;
+    guint16 gop_opt_flag;
+    guint16 idr_interval;
+    guint16 rate_ctl_method;
+    guint16 init_delay;
+    guint16 bitrate;
+    guint16 max_bitrate;
+    guint16 num_slice;
+    guint16 num_ref_frame;
+    guint16 encoded_order;
+
     GstPad *sink_pad;
     GstPad *src_pad;
     GstCaps *src_pad_caps;
@@ -56,6 +112,10 @@ static void gst_mfx_enc_push_idle_task (GstMfxEnc *self, GstMfxEncTask *task);
 static GstMfxEncTask * gst_mfx_enc_pop_idle_task (GstMfxEnc *self);
 static GstFlowReturn gst_mfx_enc_sync_task (GstMfxEnc *self, gboolean send);
 static void gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send);
+static void gst_mfx_enc_set_property (GObject *obj, guint id,
+            const GValue *value, GParamSpec *pspec);
+static void gst_mfx_enc_get_property (GObject *obj, guint id,
+            GValue *value, GParamSpec *pspec);
 static GstStateChangeReturn gst_mfx_enc_change_state (GstElement *element,
             GstStateChange transition);
 static gboolean gst_mfx_enc_sink_pad_setcaps (GstPad *pad,
@@ -96,6 +156,162 @@ GST_STATIC_PAD_TEMPLATE (
 
 GST_BOILERPLATE (GstMfxEnc, gst_mfx_enc,
             GstMfxBase, GST_TYPE_MFX_BASE);
+
+#define GST_TYPE_MFX_ENC_CODEC_ID   \
+    (gst_mfx_enc_codec_id_get_type ())
+static GType
+gst_mfx_enc_codec_id_get_type (void)
+{
+    static GType codec_id_type = 0;
+    static const GEnumValue codec_id[] =
+    {
+        { MFX_CODEC_AVC, "AVC", "avc" },
+        { MFX_CODEC_MPEG2, "MPEG-2", "mpeg2" },
+        { MFX_CODEC_VC1, "VC-1", "vc1" },
+        { 0, NULL, NULL }
+    };
+
+    if (!codec_id_type)
+      codec_id_type = g_enum_register_static ("GstMfxEncCodecIdType",
+                  codec_id);
+
+    return codec_id_type;
+}
+
+#define GST_TYPE_MFX_ENC_CODEC_PROFILE   \
+    (gst_mfx_enc_codec_profile_get_type ())
+static GType
+gst_mfx_enc_codec_profile_get_type (void)
+{
+    static GType codec_profile_type = 0;
+    static const GEnumValue codec_profile[] =
+    {
+        { MFX_PROFILE_UNKNOWN, "Unknown", "unknown" },
+        { MFX_PROFILE_AVC_BASELINE, "AVC Baseline", "avc-baseline" },
+        { MFX_PROFILE_AVC_MAIN, "AVC Main", "avc-main" },
+        { MFX_PROFILE_AVC_HIGH, "AVC High", "avc-high" },
+        { MFX_PROFILE_MPEG2_SIMPLE, "MPEG-2 Simple", "mpeg2-simple" },
+        { MFX_PROFILE_MPEG2_MAIN, "MPEG-2 Main", "mpeg2-main" },
+        { MFX_PROFILE_MPEG2_HIGH, "MPEG-2 High", "mpeg2-high" },
+        { MFX_PROFILE_VC1_SIMPLE, "VC-1 Simple", "vc1-simple" },
+        { MFX_PROFILE_VC1_MAIN, "VC-1 Main", "vc1-main" },
+        { MFX_PROFILE_VC1_ADVANCED, "VC-1 Advanced", "vc1-advanced" },
+        { 0, NULL, NULL }
+    };
+
+    if (!codec_profile_type)
+      codec_profile_type = g_enum_register_static ("GstMfxEncCodecProfileType",
+                  codec_profile);
+
+    return codec_profile_type;
+}
+
+#define GST_TYPE_MFX_ENC_CODEC_LEVEL   \
+    (gst_mfx_enc_codec_level_get_type ())
+static GType
+gst_mfx_enc_codec_level_get_type (void)
+{
+    static GType codec_level_type = 0;
+    static const GEnumValue codec_level[] =
+    {
+        { MFX_LEVEL_UNKNOWN, "Unknown", "unknown" },
+        { MFX_LEVEL_AVC_1, "AVC 1", "avc1" },
+        { MFX_LEVEL_AVC_1b, "AVC 1b", "avc1b" },
+        { MFX_LEVEL_AVC_11, "AVC 11", "avc11" },
+        { MFX_LEVEL_AVC_12, "AVC 12", "avc12" },
+        { MFX_LEVEL_AVC_13, "AVC 13", "avc13" },
+        { MFX_LEVEL_AVC_2, "AVC 2", "avc2" },
+        { MFX_LEVEL_AVC_21, "AVC 21", "avc21" },
+        { MFX_LEVEL_AVC_22, "AVC 22", "avc22" },
+        { MFX_LEVEL_AVC_3, "AVC 3", "avc3" },
+        { MFX_LEVEL_AVC_31, "AVC 31", "avc31" },
+        { MFX_LEVEL_AVC_32, "AVC 32", "avc32" },
+        { MFX_LEVEL_AVC_4, "AVC 4", "avc4" },
+        { MFX_LEVEL_AVC_41, "AVC 41", "avc41" },
+        { MFX_LEVEL_AVC_42, "AVC 42", "avc42" },
+        { MFX_LEVEL_AVC_5, "AVC 5", "avc5" },
+        { MFX_LEVEL_AVC_51, "AVC 51", "avc51" },
+        { MFX_LEVEL_AVC_52, "AVC 52", "avc52" },
+        { MFX_LEVEL_MPEG2_LOW, "MPEG-2 Low", "mpeg2-low" },
+        { MFX_LEVEL_MPEG2_MAIN, "MPEG-2 Main", "mpeg2-main" },
+        { MFX_LEVEL_MPEG2_HIGH, "MPEG-2 High", "mpeg2-high" },
+        { MFX_LEVEL_MPEG2_HIGH1440, "MPEG-2 High1440", "mpeg2-high1440" },
+        { MFX_LEVEL_VC1_LOW, "VC-1 Low", "vc1-low" },
+        { MFX_LEVEL_VC1_MEDIAN, "VC-1 Median", "vc1-median" },
+        { MFX_LEVEL_VC1_HIGH, "VC-1 High", "vc1-high" },
+        { 0, NULL, NULL }
+    };
+
+    if (!codec_level_type)
+      codec_level_type = g_enum_register_static ("GstMfxEncCodecLevelType",
+                  codec_level);
+
+    return codec_level_type;
+}
+
+#define GST_TYPE_MFX_ENC_TARGET_USAGE   \
+    (gst_mfx_enc_target_usage_get_type ())
+static GType
+gst_mfx_enc_target_usage_get_type (void)
+{
+    static GType target_usage_type = 0;
+    static const GEnumValue target_usage[] =
+    {
+        { MFX_TARGETUSAGE_UNKNOWN, "Unknown", "unknown" },
+        { MFX_TARGETUSAGE_BEST_QUALITY, "Best Quality", "best-quality" },
+        { MFX_TARGETUSAGE_BALANCED, "Balanced", "balanced" },
+        { MFX_TARGETUSAGE_BEST_SPEED, "Best Speed", "best-speed" },
+        { 0, NULL, NULL }
+    };
+
+    if (!target_usage_type)
+      target_usage_type = g_enum_register_static ("GstMfxEncTargetUsageType",
+                  target_usage);
+
+    return target_usage_type;
+}
+
+#define GST_TYPE_MFX_ENC_GOP_OPT_FLAG   \
+    (gst_mfx_enc_gop_opt_flag_get_type ())
+static GType
+gst_mfx_enc_gop_opt_flag_get_type (void)
+{
+    static GType gop_opt_flag_type = 0;
+    static const GEnumValue gop_opt_flag[] =
+    {
+        { MFX_GOP_CLOSED, "Gop Closed", "closed" },
+        { MFX_GOP_STRICT, "Gop Strict", "strict" },
+        { 0, NULL, NULL }
+    };
+
+    if (!gop_opt_flag_type)
+      gop_opt_flag_type = g_enum_register_static ("GstMfxEncGopOptFlagType",
+                  gop_opt_flag);
+
+    return gop_opt_flag_type;
+}
+
+#define GST_TYPE_MFX_ENC_RATE_CTL_METHOD   \
+    (gst_mfx_enc_rate_ctl_method_get_type ())
+static GType
+gst_mfx_enc_rate_ctl_method_get_type (void)
+{
+    static GType rate_ctl_method_type = 0;
+    static const GEnumValue rate_ctl_method[] =
+    {
+        { MFX_RATECONTROL_CBR, "CBR", "cbr" },
+        { MFX_RATECONTROL_VBR, "VBR", "vbr" },
+        { MFX_RATECONTROL_CQP, "CQP", "cqp" },
+        { MFX_RATECONTROL_AVBR, "AVBR", "avbr" },
+        { 0, NULL, NULL }
+    };
+
+    if (!rate_ctl_method_type)
+      rate_ctl_method_type = g_enum_register_static ("GstMfxEncRateCtlMethodType",
+                  rate_ctl_method);
+
+    return rate_ctl_method_type;
+}
 
 static void
 gst_mfx_enc_dispose (GObject *obj)
@@ -186,10 +402,108 @@ gst_mfx_enc_class_init (GstMfxEncClass *klass)
 
     obj_class->constructor = gst_mfx_enc_constructor;
     obj_class->constructed = gst_mfx_enc_constructed;
+    obj_class->set_property = gst_mfx_enc_set_property;
+    obj_class->get_property = gst_mfx_enc_get_property;
     obj_class->dispose = gst_mfx_enc_dispose;
     obj_class->finalize = gst_mfx_enc_finalize;
 
     element_class->change_state = gst_mfx_enc_change_state;
+
+    g_object_class_install_property (obj_class, PROP_CODEC_ID,
+                g_param_spec_enum ("codec-id", "Codec Id",
+                    "Codec ID", GST_TYPE_MFX_ENC_CODEC_ID,
+                    GST_MFX_ENC_CODEC_ID_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_CODEC_PROFILE,
+                g_param_spec_enum ("codec-profile", "Codec profile",
+                    "Codec Profile", GST_TYPE_MFX_ENC_CODEC_PROFILE,
+                    GST_MFX_ENC_CODEC_PROFILE_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_CODEC_LEVEL,
+                g_param_spec_enum ("codec-level", "Codec level",
+                    "Codec Level", GST_TYPE_MFX_ENC_CODEC_LEVEL,
+                    GST_MFX_ENC_CODEC_LEVEL_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_NUM_THREAD,
+                g_param_spec_uint ("num-thread", "Num thread",
+                    "Num Thread", 0, G_MAXUINT,
+                    GST_MFX_ENC_NUM_THREAD_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_TARGET_USAGE,
+                g_param_spec_enum ("target-usage", "Target usage",
+                    "Target Usage", GST_TYPE_MFX_ENC_TARGET_USAGE,
+                    GST_MFX_ENC_TARGET_USAGE_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_GOP_PIC_SIZE,
+                g_param_spec_uint ("gop-pic-size", "Gop pic size",
+                    "Gop Pic Size", 0, G_MAXUINT,
+                    GST_MFX_ENC_GOP_PIC_SIZE_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_GOP_REF_DIST,
+                g_param_spec_uint ("gop-ref-dist", "Gop ref dist",
+                    "Gop Ref Dist", 0, G_MAXUINT,
+                    GST_MFX_ENC_GOP_REF_DIST_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_GOP_OPT_FLAG,
+                g_param_spec_enum ("gop-opt-flag", "Gop opt flag",
+                    "Gop Opt Flag", GST_TYPE_MFX_ENC_GOP_OPT_FLAG,
+                    GST_MFX_ENC_GOP_OPT_FLAG_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_IDR_INTERVAL,
+                g_param_spec_uint ("idr-interval", "IDR interval",
+                    "IDR Interval", 0, G_MAXUINT,
+                    GST_MFX_ENC_IDR_INTERVAL_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_RATE_CTL_METHOD,
+                g_param_spec_enum ("rate-ctl-method", "Rate ctl method",
+                    "Rate Ctl Method", GST_TYPE_MFX_ENC_RATE_CTL_METHOD,
+                    GST_MFX_ENC_RATE_CTL_METHOD_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_INIT_DELAY,
+                g_param_spec_uint ("init-delay", "Init delay",
+                    "Init Delay (in KB)", 0, G_MAXUINT,
+                    GST_MFX_ENC_INIT_DELAY_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_BITRATE,
+                g_param_spec_uint ("bitrate", "Bitrate",
+                    "Bitrate (in Kbps)", 0, G_MAXUINT,
+                    GST_MFX_ENC_BITRATE_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_MAX_BITRATE,
+                g_param_spec_uint ("max-bitrate", "Max bitrate",
+                    "Max bitrate (in Kbps)", 0, G_MAXUINT,
+                    GST_MFX_ENC_MAX_BITRATE_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_NUM_SLICE,
+                g_param_spec_uint ("num-slice", "Num slice",
+                    "Num slice", 0, G_MAXUINT,
+                    GST_MFX_ENC_NUM_SLICE_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_NUM_REF_FRAME,
+                g_param_spec_uint ("num-ref-frame", "Num ref frame",
+                    "Num Ref Frame", 0, G_MAXUINT,
+                    GST_MFX_ENC_NUM_REF_FRAME_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+
+    g_object_class_install_property (obj_class, PROP_ENCODED_ORDER,
+                g_param_spec_uint ("encoded-order", "Encoded order",
+                    "Encoded Order", 0, G_MAXUINT,
+                    GST_MFX_ENC_ENCODED_ORDER_DEFAULT,
+                    G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
 
     g_type_class_add_private (klass, sizeof (GstMfxEncPrivate));
 
@@ -355,6 +669,130 @@ gst_mfx_enc_flush_frames (GstMfxEnc *self, gboolean send)
       gst_mfx_enc_sync_task (self, send);
 }
 
+static void
+gst_mfx_enc_set_property (GObject *obj, guint id,
+            const GValue *value, GParamSpec *pspec)
+{
+    GstMfxEnc *self = GST_MFX_ENC (obj);
+    GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
+
+    switch (id) {
+    case PROP_CODEC_ID:
+        priv->codec_id = g_value_get_enum (value);
+        break;
+    case PROP_CODEC_PROFILE:
+        priv->codec_profile = g_value_get_enum (value);
+		break;
+    case PROP_CODEC_LEVEL:
+        priv->codec_level = g_value_get_enum (value);
+		break;
+    case PROP_NUM_THREAD:
+        priv->num_thread = g_value_get_uint (value);
+		break;
+    case PROP_TARGET_USAGE:
+        priv->target_usage = g_value_get_enum (value);
+		break;
+    case PROP_GOP_PIC_SIZE:
+        priv->gop_pic_size = g_value_get_uint (value);
+		break;
+    case PROP_GOP_REF_DIST:
+        priv->gop_ref_dist = g_value_get_uint (value);
+		break;
+    case PROP_GOP_OPT_FLAG:
+        priv->gop_opt_flag = g_value_get_enum (value);
+		break;
+    case PROP_IDR_INTERVAL:
+        priv->idr_interval = g_value_get_uint (value);
+		break;
+    case PROP_RATE_CTL_METHOD:
+        priv->rate_ctl_method = g_value_get_enum (value);
+		break;
+    case PROP_INIT_DELAY:
+        priv->init_delay = g_value_get_uint (value);
+		break;
+    case PROP_BITRATE:
+        priv->bitrate = g_value_get_uint (value);
+		break;
+    case PROP_MAX_BITRATE:
+        priv->max_bitrate = g_value_get_uint (value);
+		break;
+    case PROP_NUM_SLICE:
+        priv->num_slice = g_value_get_uint (value);
+		break;
+    case PROP_NUM_REF_FRAME:
+        priv->num_ref_frame = g_value_get_uint (value);
+		break;
+    case PROP_ENCODED_ORDER:
+        priv->encoded_order = g_value_get_uint (value);
+		break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, id, pspec);
+        break;
+    }
+}
+
+static void
+gst_mfx_enc_get_property (GObject *obj, guint id,
+            GValue *value, GParamSpec *pspec)
+{
+    GstMfxEnc *self = GST_MFX_ENC (obj);
+    GstMfxEncPrivate *priv = GST_MFX_ENC_GET_PRIVATE (self);
+
+    switch (id) {
+    case PROP_CODEC_ID:
+        g_value_set_enum (value, priv->codec_id);
+        break;
+    case PROP_CODEC_PROFILE:
+        g_value_set_enum (value, priv->codec_profile);
+		break;
+    case PROP_CODEC_LEVEL:
+        g_value_set_enum (value, priv->codec_level);
+		break;
+    case PROP_NUM_THREAD:
+        g_value_set_uint (value, priv->num_thread);
+		break;
+    case PROP_TARGET_USAGE:
+        g_value_set_enum (value, priv->target_usage);
+		break;
+    case PROP_GOP_PIC_SIZE:
+        g_value_set_uint (value, priv->gop_pic_size);
+		break;
+    case PROP_GOP_REF_DIST:
+        g_value_set_uint (value, priv->gop_ref_dist);
+		break;
+    case PROP_GOP_OPT_FLAG:
+        g_value_set_enum (value, priv->gop_opt_flag);
+		break;
+    case PROP_IDR_INTERVAL:
+        g_value_set_uint (value, priv->idr_interval);
+		break;
+    case PROP_RATE_CTL_METHOD:
+        g_value_set_enum (value, priv->rate_ctl_method);
+		break;
+    case PROP_INIT_DELAY:
+        g_value_set_uint (value, priv->init_delay);
+		break;
+    case PROP_BITRATE:
+        g_value_set_uint (value, priv->bitrate);
+		break;
+    case PROP_MAX_BITRATE:
+        g_value_set_uint (value, priv->max_bitrate);
+		break;
+    case PROP_NUM_SLICE:
+        g_value_set_uint (value, priv->num_slice);
+		break;
+    case PROP_NUM_REF_FRAME:
+        g_value_set_uint (value, priv->num_ref_frame);
+		break;
+    case PROP_ENCODED_ORDER:
+        g_value_set_uint (value, priv->encoded_order);
+		break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (obj, id, pspec);
+        break;
+    }
+}
+
 static GstStateChangeReturn
 gst_mfx_enc_change_state (GstElement *element,
             GstStateChange transition)
@@ -432,15 +870,22 @@ gst_mfx_enc_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
                 "protected", &priv->mfx_video_param.Protected,
                 "io-pattern", &priv->mfx_video_param.IOPattern,
                 NULL);
-    priv->mfx_video_param.mfx.CodecId = MFX_CODEC_AVC;
-    priv->mfx_video_param.mfx.CodecProfile = MFX_PROFILE_AVC_MAIN;
-    priv->mfx_video_param.mfx.TargetKbps = 1024;
-    priv->mfx_video_param.mfx.TargetUsage = MFX_TARGETUSAGE_BEST_SPEED;
-    priv->mfx_video_param.mfx.EncodedOrder = 0;
-    priv->mfx_video_param.mfx.RateControlMethod = MFX_RATECONTROL_CBR;
-    priv->mfx_video_param.mfx.GopPicSize = 24;
-    priv->mfx_video_param.mfx.GopRefDist = 1;
-    priv->mfx_video_param.mfx.IdrInterval = 0;
+    priv->mfx_video_param.mfx.CodecId = priv->codec_id;
+    priv->mfx_video_param.mfx.CodecProfile = priv->codec_profile;
+    priv->mfx_video_param.mfx.CodecLevel = priv->codec_level;
+    priv->mfx_video_param.mfx.NumThread = priv->num_thread;
+    priv->mfx_video_param.mfx.TargetUsage = priv->target_usage;
+    priv->mfx_video_param.mfx.GopPicSize = priv->gop_pic_size;
+    priv->mfx_video_param.mfx.GopRefDist = priv->gop_ref_dist;
+    priv->mfx_video_param.mfx.GopOptFlag = priv->gop_opt_flag;
+    priv->mfx_video_param.mfx.IdrInterval = priv->idr_interval;
+    priv->mfx_video_param.mfx.RateControlMethod = priv->rate_ctl_method;
+    priv->mfx_video_param.mfx.InitialDelayInKB = priv->init_delay;
+    priv->mfx_video_param.mfx.TargetKbps = priv->bitrate;
+    priv->mfx_video_param.mfx.MaxKbps = priv->max_bitrate;
+    priv->mfx_video_param.mfx.NumSlice = priv->num_slice;
+    priv->mfx_video_param.mfx.NumRefFrame = priv->num_ref_frame;
+    priv->mfx_video_param.mfx.EncodedOrder = priv->encoded_order;
     priv->mfx_video_param.mfx.FrameInfo.Width = width;
     priv->mfx_video_param.mfx.FrameInfo.Height = height;
     priv->mfx_video_param.mfx.FrameInfo.FrameRateExtD = denominator;
