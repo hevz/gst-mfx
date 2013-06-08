@@ -8,6 +8,7 @@
  ============================================================================
  */
 
+#include "gst-mfx-helpers.h"
 #include "gst-mfx-enc.h"
 
 #define GST_MFX_ENC_CODEC_ID_DEFAULT            MFX_CODEC_AVC
@@ -801,9 +802,8 @@ gst_mfx_enc_change_state (GstElement *element,
     GstMfxBase *parent = GST_MFX_BASE (self);
     GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
 
-    if ((GST_STATE_CHANGE_NULL_TO_READY == transition) ||
-        (GST_STATE_CHANGE_READY_TO_PAUSED == transition) ||
-        (GST_STATE_CHANGE_PAUSED_TO_PLAYING == transition)) {
+    if (GST_STATE_CHANGE_DIR_UPWARDS ==
+            GST_STATE_CHANGE_DIR (transition)) {
         ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
         if (GST_STATE_CHANGE_FAILURE == ret)
           goto out;
@@ -822,9 +822,8 @@ gst_mfx_enc_change_state (GstElement *element,
         break;
     }
 
-    if ((GST_STATE_CHANGE_PLAYING_TO_PAUSED == transition) ||
-        (GST_STATE_CHANGE_PAUSED_TO_READY == transition) ||
-        (GST_STATE_CHANGE_READY_TO_NULL == transition)) {
+    if (GST_STATE_CHANGE_DIR_DOWNWARDS ==
+            GST_STATE_CHANGE_DIR (transition)) {
         ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
         if (GST_STATE_CHANGE_FAILURE == ret)
           goto out;

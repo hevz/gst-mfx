@@ -10,6 +10,7 @@
 
 #include <stdlib.h>
 
+#include "gst-mfx-helpers.h"
 #include "gst-mfx-base.h"
 
 #define GST_MFX_BASE_IMPL_DEFAULT           MFX_IMPL_AUTO_ANY
@@ -216,12 +217,12 @@ gst_mfx_base_change_state (GstElement *element,
     GstMfxBasePrivate *priv = GST_MFX_BASE_GET_PRIVATE (self);
     GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
 
-    if ((GST_STATE_CHANGE_NULL_TO_READY == transition) ||
-        (GST_STATE_CHANGE_READY_TO_PAUSED == transition) ||
-        (GST_STATE_CHANGE_PAUSED_TO_PLAYING == transition)) {
+    if (GST_STATE_CHANGE_DIR_UPWARDS ==
+            GST_STATE_CHANGE_DIR (transition)) {
         ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
         if (GST_STATE_CHANGE_FAILURE == ret)
           goto out;
+
     }
 
     switch (transition) {
@@ -263,9 +264,8 @@ gst_mfx_base_change_state (GstElement *element,
         break;
     }
 
-    if ((GST_STATE_CHANGE_PLAYING_TO_PAUSED == transition) ||
-        (GST_STATE_CHANGE_PAUSED_TO_READY == transition) ||
-        (GST_STATE_CHANGE_READY_TO_NULL == transition)) {
+    if (GST_STATE_CHANGE_DIR_DOWNWARDS ==
+            GST_STATE_CHANGE_DIR (transition)) {
         ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
         if (GST_STATE_CHANGE_FAILURE == ret)
           goto out;
