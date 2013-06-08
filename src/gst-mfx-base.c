@@ -288,7 +288,7 @@ gst_mfx_base_class_init (GstMfxBaseClass *klass)
     obj_class->dispose = gst_mfx_base_dispose;
     obj_class->finalize = gst_mfx_base_finalize;
 
-    element_class->change_state = gst_mfx_base_change_state;
+    element_class->change_state = GST_DEBUG_FUNCPTR (gst_mfx_base_change_state);
 
     /* Properties */
     g_object_class_install_property (obj_class, PROP_IMPL,

@@ -408,7 +408,7 @@ gst_mfx_enc_class_init (GstMfxEncClass *klass)
     obj_class->dispose = gst_mfx_enc_dispose;
     obj_class->finalize = gst_mfx_enc_finalize;
 
-    element_class->change_state = gst_mfx_enc_change_state;
+    element_class->change_state = GST_DEBUG_FUNCPTR (gst_mfx_enc_change_state);
 
     g_object_class_install_property (obj_class, PROP_CODEC_ID,
                 g_param_spec_enum ("codec-id", "Codec Id",

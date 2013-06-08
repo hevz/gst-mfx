@@ -212,7 +212,7 @@ gst_mfx_scl_class_init (GstMfxSclClass *klass)
     obj_class->dispose = gst_mfx_scl_dispose;
     obj_class->finalize = gst_mfx_scl_finalize;
 
-    element_class->change_state = gst_mfx_scl_change_state;
+    element_class->change_state = GST_DEBUG_FUNCPTR (gst_mfx_scl_change_state);
 
     g_object_class_install_property (obj_class, PROP_WIDTH,
                 g_param_spec_int ("width", "Width",
