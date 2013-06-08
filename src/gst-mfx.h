@@ -15,6 +15,7 @@
 
 #include "gst-mfx-enc.h"
 #include "gst-mfx-dec.h"
+#include "gst-mfx-trans.h"
 #include "gst-mfx-scl.h"
 
 #endif /* __GST_MFX_H__ */
