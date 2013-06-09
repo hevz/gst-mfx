@@ -471,7 +471,7 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
                     NULL))
       goto fail;
     if (0 == real_format)
-      format = MFX_FOURCC_RGB4;
+      format = real_format = MFX_FOURCC_RGB4;
     else if (GST_FOURCC_I420 == real_format)
       format = MFX_FOURCC_YV12;
     else
