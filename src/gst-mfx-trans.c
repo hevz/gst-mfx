@@ -11,6 +11,9 @@
 #include "gst-mfx-helpers.h"
 #include "gst-mfx-trans.h"
 
+#define GST_FOURCC_NV12     GST_MAKE_FOURCC ('N', 'V', '1', '2')
+#define GST_FOURCC_I420     GST_MAKE_FOURCC ('I', '4', '2', '0')
+
 #define GST_MFX_TRANS_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), GST_TYPE_MFX_TRANS, GstMfxTransPrivate))
 #define GST_CAT_DEFAULT (mfxtrans_debug)
 
@@ -78,9 +81,45 @@ GST_STATIC_PAD_TEMPLATE (
             GST_PAD_SINK,
             GST_PAD_ALWAYS,
             GST_STATIC_CAPS ("video/x-raw-yuv, "
-                "format = (fourcc) { NV12 }, "
+                "format = (fourcc) { I420, YV12, NV12 }, "
                 "framerate = (fraction) [0, MAX], "
-                "width = (int) [ 16, MAX ], " "height = (int) [ 16, MAX ]")
+                "width = (int) [ 16, MAX ], " "height = (int) [ 16, MAX ]; "
+                "video/x-raw-rgb, "
+                "bpp = (int) 32, " "depth = (int) 24, "
+                "endianness = (int) BIG_ENDIAN, "
+                "red_mask =   (int) 0xFF000000, "
+                "green_mask = (int) 0x00FF0000, "
+                "blue_mask =  (int) 0x0000FF00, "
+                "width = (int) [ 16, MAX ], "
+                "height = (int) [ 16, MAX ], "
+                "framerate = (fraction) [0, MAX]; "
+                "video/x-raw-rgb, "
+                "bpp = (int) 32, " "depth = (int) 24, "
+                "endianness = (int) BIG_ENDIAN, "
+                "red_mask =   (int) 0x00FF0000, "
+                "green_mask = (int) 0x0000FF00, "
+                "blue_mask =  (int) 0x000000FF, "
+                "width = (int) [ 16, MAX ], "
+                "height = (int) [ 16, MAX ], "
+                "framerate = (fraction) [0, MAX]; "
+                "video/x-raw-rgb, "
+                "bpp = (int) 32, " "depth = (int) 24, "
+                "endianness = (int) BIG_ENDIAN, "
+                "red_mask =   (int) 0x0000FF00, "
+                "green_mask = (int) 0x00FF0000, "
+                "blue_mask =  (int) 0xFF000000, "
+                "width = (int) [ 16, MAX ], "
+                "height = (int) [ 16, MAX ], "
+                "framerate = (fraction) [0, MAX]; "
+                "video/x-raw-rgb, "
+                "bpp = (int) 32, " "depth = (int) 24, "
+                "endianness = (int) BIG_ENDIAN, "
+                "red_mask =   (int) 0x000000FF, "
+                "green_mask = (int) 0x0000FF00, "
+                "blue_mask =  (int) 0x00FF0000, "
+                "width = (int) [ 16, MAX ], "
+                "height = (int) [ 16, MAX ], "
+                "framerate = (fraction) [0, MAX]")
             );
 
 static GstStaticPadTemplate gst_mfx_trans_src_template =
@@ -402,7 +441,9 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     mfxStatus s = MFX_ERR_NONE;
     mfxFrameAllocRequest reqs[2];
     gint width = 0, height = 0, width_out = 0, height_out = 0;
-    gint numerator = 0, denominator = 0;
+    gint numerator = 0, denominator = 0,
+         red_mask = 0, green_mask = 0, blue_mask = 0;
+    guint32 real_format = 0, format = 0;
 
     if (!GST_CAPS_IS_SIMPLE (caps))
       goto fail;
@@ -421,6 +462,20 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     if (!gst_structure_get_fraction (structure, "framerate",
                     &numerator, &denominator))
       goto fail;
+    if (!gst_structure_get_fourcc (structure,
+                    "format", &real_format) &&
+        !gst_structure_get (structure,
+                    "red_mask", G_TYPE_INT, &red_mask,
+                    "green_mask", G_TYPE_INT, &green_mask,
+                    "blue_mask", G_TYPE_INT, &blue_mask,
+                    NULL))
+      goto fail;
+    if (0 == real_format)
+      format = MFX_FOURCC_RGB4;
+    else if (GST_FOURCC_I420 == real_format)
+      format = MFX_FOURCC_YV12;
+    else
+      format = real_format;
 
     memset (&priv->mfx_video_param, 0, sizeof (mfxVideoParam));
     g_object_get (self,
@@ -432,7 +487,7 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
     priv->mfx_video_param.vpp.In.Height = height;
     priv->mfx_video_param.vpp.In.FrameRateExtD = denominator;
     priv->mfx_video_param.vpp.In.FrameRateExtN = numerator;
-    priv->mfx_video_param.vpp.In.FourCC = MFX_FOURCC_NV12;
+    priv->mfx_video_param.vpp.In.FourCC = format;
     priv->mfx_video_param.vpp.In.PicStruct = MFX_PICSTRUCT_PROGRESSIVE;
     priv->mfx_video_param.vpp.In.CropX = 0;
     priv->mfx_video_param.vpp.In.CropY = 0;
@@ -466,11 +521,16 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
         goto fail;
     }
     /* Calc input buffer length */
-    switch (priv->mfx_video_param.vpp.In.FourCC) {
+    switch (real_format) {
     case MFX_FOURCC_NV12:
+    case MFX_FOURCC_YV12:
+    case GST_FOURCC_I420:
         priv->in_buf_len = width * height +
             (width>>1) * (height>>1) +
             (width>>1) * (height>>1);
+        break;
+    case MFX_FOURCC_RGB4:
+        priv->in_buf_len = width * height * 4;
         break;
     }
     /* Calc output buffer length */
@@ -525,12 +585,42 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
             /* Alloc buffer for input: mfxFrameSurface1 */
             task->input.Data.MemId =
                 g_slice_alloc0 (priv->in_buf_len);
-            switch (priv->mfx_video_param.vpp.In.FourCC) {
+            switch (real_format) {
             case MFX_FOURCC_NV12:
                 task->input.Data.Y = task->input.Data.MemId;
                 task->input.Data.U = task->input.Data.Y + width * height;
                 task->input.Data.V = task->input.Data.U + 1;
                 task->input.Data.Pitch = width;
+                break;
+            case MFX_FOURCC_YV12:
+                task->input.Data.Y = task->input.Data.MemId;
+                task->input.Data.V = task->input.Data.Y + width * height;
+                task->input.Data.U = task->input.Data.V + (width * height >> 2);
+                task->input.Data.Pitch = width;
+                break;
+            case GST_FOURCC_I420:
+                task->input.Data.Y = task->input.Data.MemId;
+                task->input.Data.U = task->input.Data.Y + width * height;
+                task->input.Data.V = task->input.Data.U + (width * height >> 2);
+                task->input.Data.Pitch = width;
+                break;
+            case MFX_FOURCC_RGB4:
+                {
+                    guint offset = 0;
+                    for (offset=0; offset<4; offset++) {
+                        gint32 mask = 0xFF << (offset * 8);
+                        gpointer data = task->input.Data.MemId;
+
+                        data += 3 - offset;
+                        if (mask == red_mask)
+                          task->input.Data.R = data;
+                        else if (mask == green_mask)
+                          task->input.Data.G = data;
+                        else if (mask == blue_mask)
+                          task->input.Data.B = data;
+                    }
+                    task->input.Data.Pitch = width * 4;
+                }
                 break;
             }
             /* Alloc buffer for output: mfxFrameSurface1 */
@@ -555,8 +645,7 @@ gst_mfx_trans_sink_pad_setcaps (GstPad *pad, GstCaps *caps)
                 "width", G_TYPE_INT, width_out,
                 "height", G_TYPE_INT, height_out,
                 "framerate", GST_TYPE_FRACTION, numerator, denominator,
-                "format", GST_TYPE_FOURCC,
-                                GST_MAKE_FOURCC ('N', 'V', '1', '2'),
+                "format", GST_TYPE_FOURCC, GST_FOURCC_NV12,
                 NULL);
     priv->src_pad_caps = gst_caps_new_full (structure, NULL);
 
