@@ -31,7 +31,7 @@ struct _GstMfxBase
 {
     GstElement parent_instance;
 
-    /* Private */
+    /* < protected > */
     mfxSession mfx_session;
 };
 
